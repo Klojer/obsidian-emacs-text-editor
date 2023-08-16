@@ -1,6 +1,6 @@
 {
 	"name": "emacs-text-editor",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Partial emulation of Emacs text editor for Obisidian",
 	"main": "main.js",
 	"scripts": {
