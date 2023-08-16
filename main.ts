@@ -9,7 +9,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		console.log('loading plugin: Emacs text editor');
 
 		this.addCommand({
-			id: 'emacs-forward-char',
+			id: 'forward-char',
 			name: 'Forward char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -19,7 +19,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-backward-char',
+			id: 'backward-char',
 			name: 'Backward char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -29,7 +29,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-next-line',
+			id: 'next-line',
 			name: 'Next line',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -39,7 +39,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-previous-line',
+			id: 'previous-line',
 			name: 'Previous line',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -49,7 +49,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-forward-word',
+			id: 'forward-word',
 			name: 'Forward word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -59,7 +59,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-backward-word',
+			id: 'backward-word',
 			name: 'Backward word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -69,7 +69,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-move-end-of-line',
+			id: 'move-end-of-line',
 			name: 'Move end of line',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -81,7 +81,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-move-beginning-of-line',
+			id: 'move-beginning-of-line',
 			name: 'Move cursor to beginning of line',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -92,7 +92,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-beginning-of-buffer',
+			id: 'beginning-of-buffer',
 			name: 'Beginning of buffer',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -102,7 +102,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-end-of-buffer',
+			id: 'end-of-buffer',
 			name: 'End of buffer',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
@@ -112,7 +112,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-kill-line',
+			id: 'kill-line',
 			name: 'Kill line',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
@@ -129,7 +129,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-delete-char',
+			id: 'delete-char',
 			name: 'Delete char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
@@ -141,7 +141,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-kill-word',
+			id: 'kill-word',
 			name: 'Kill word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
@@ -153,7 +153,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-backward-kill-word',
+			id: 'backward-kill-word',
 			name: 'Backward kill word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
@@ -165,7 +165,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-kill-ring-save',
+			id: 'kill-ring-save',
 			name: 'Kill ring save',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				if (this.selectFrom === undefined) {
@@ -179,7 +179,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-kill-region',
+			id: 'kill-region',
 			name: 'Kill region',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				if (this.selectFrom === undefined) {
@@ -194,7 +194,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-yank',
+			id: 'yank',
 			name: 'Yank',
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				const clipboardContent = await navigator.clipboard.readText()
@@ -212,7 +212,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-set-mark-command',
+			id: 'set-mark-command',
 			name: 'Set mark command',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				if (this.selectFrom === undefined) {
@@ -224,7 +224,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-keyboard-quit',
+			id: 'keyboard-quit',
 			name: 'Keyboard-quit',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
@@ -232,7 +232,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-undo',
+			id: 'undo',
 			name: 'Undo',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				editor.undo()
@@ -240,7 +240,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-redo',
+			id: 'redo',
 			name: 'Redo',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				editor.redo()
@@ -248,7 +248,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'emacs-recenter-top-bottom',
+			id: 'recenter-top-bottom',
 			name: 'Recenter',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				const cursor = editor.getCursor()
