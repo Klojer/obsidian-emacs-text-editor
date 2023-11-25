@@ -4,6 +4,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	// TODO: Consider possibility migrate to native selection mechanism
 	selectFrom?: EditorPosition = undefined
+	ctrlPressed?: boolean = false;
 
 	onload() {
 		console.log('loading plugin: Emacs text editor');
@@ -133,7 +134,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: 'Delete char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
-				
+
 				this.withDeleteInText(editor, () => {
 					editor.exec("goRight")
 				})
@@ -145,7 +146,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: 'Kill word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
-				
+
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordRight")
 				})
@@ -157,7 +158,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: 'Backward kill word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
-				
+
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordLeft")
 				})
@@ -201,7 +202,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				const cursor = editor.getCursor()
 
 				if (this.selectFrom === undefined) {
-					editor.replaceRange(clipboardContent, cursor)					
+					editor.replaceRange(clipboardContent, cursor)
 				} else {
 					editor.replaceSelection(clipboardContent)
 					this.disableSelection(editor)
@@ -257,6 +258,51 @@ export default class EmacsTextEditorPlugin extends Plugin {
 					to: { line: cursor.line, ch: cursor.ch }
 				}
 				editor.scrollIntoView(range, true)
+			}
+		});
+
+		this.registerDomEvent(document, "keydown", (ev: KeyboardEvent) => {
+			console.log('Keydown', ev);
+
+			if (ev.ctrlKey || ev.key == "CapsLock") {
+				this.ctrlPressed = true;
+				console.log('Ctrl down');
+			}
+
+			if (!this.ctrlPressed) {
+				return;
+			}
+
+			const app = this.app as any;
+
+			if (ev.key == "f") {
+				app.commands.executeCommandById('emacs-text-editor:forward-char');
+				return;
+			}
+
+			if (ev.key == "b") {
+				app.commands.executeCommandById('emacs-text-editor:backward-char');
+				return;
+			}
+
+			if (ev.key == "n") {
+				app.commands.executeCommandById('emacs-text-editor:next-line');
+				return;
+			}
+
+			if (ev.key == "p") {
+				app.commands.executeCommandById('emacs-text-editor:previous-line');
+				return;
+			}
+
+		});
+		
+		this.registerDomEvent(document, "keyup", (ev: KeyboardEvent) => {
+			console.log('Keyup', ev);
+
+			if (ev.ctrlKey || ev.key == "CapsLock") {
+				this.ctrlPressed = false;
+				console.log('Ctrl up');
 			}
 		});
 

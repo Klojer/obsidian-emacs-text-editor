@@ -2,7 +2,7 @@
 	"id": "emacs-text-editor",
 	"name": "Emacs text editor",
 	"description": "Partial emulation of Emacs text editor for Obisidian",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"minAppVersion": "0.15.0",
 	"isDesktopOnly": false
 }
