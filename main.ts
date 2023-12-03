@@ -1,31 +1,80 @@
 import { Editor, EditorPosition, Plugin, MarkdownView } from "obsidian";
 
+class KeyPress {
+	public readonly key: string;
+	public readonly alt: boolean;
+	public readonly ctrl: boolean;
+	public readonly shift: boolean;
+	public readonly meta: boolean;
+
+	public constructor(
+		key: string,
+		shift: boolean,
+		alt: boolean,
+		ctrl: boolean,
+		meta: boolean,
+	) {
+		this.key = key;
+		this.shift = shift;
+		this.alt = alt;
+		this.ctrl = ctrl;
+		this.meta = meta;
+	}
+
+	public static fromEvent(event: KeyboardEvent): KeyPress {
+		const key = event.key;
+		const shift = event.shiftKey;
+		const ctrl = event.ctrlKey;
+		const alt = event.altKey;
+		const meta = event.metaKey;
+
+		return new KeyPress(key, shift, alt, ctrl, meta);
+	}
+
+	public readonly text = (): string => {
+		const metaRepr = this.meta ? 'Meta + ' : '';
+		const altRepr = this.alt ? 'Alt + ' : '';
+		const ctrlRepr = this.ctrl ? 'Ctrl + ' : '';
+		const shiftRepr = this.shift ? 'Shift + ' : '';
+
+		return metaRepr + ctrlRepr + altRepr + shiftRepr + this.key;
+	};
+
+}
+
+type EditorCb = (this: EmacsTextEditorPlugin, editor: Editor) => void;
+
+
 export default class EmacsTextEditorPlugin extends Plugin {
 
 	// TODO: Consider possibility migrate to native selection mechanism
 	selectFrom?: EditorPosition = undefined
-	ctrlPressed?: boolean = false;
+
+	keyMap?: Map<string, EditorCb> = undefined;
 
 	onload() {
 		console.log('loading plugin: Emacs text editor');
+
+		// TODO: try load keymap
+		this.keyMap = new Map<string, EditorCb>()
+		this.keyMap.set(new KeyPress("f", false, false, true, false).text(), this.forwardChar);
+		this.keyMap.set(new KeyPress("b", false, false, true, false).text(), this.backwardChar);
+		this.keyMap.set(new KeyPress("n", false, false, true, false).text(), this.nextLine);
+		this.keyMap.set(new KeyPress("p", false, false, true, false).text(), this.previousLine);
 
 		this.addCommand({
 			id: 'forward-char',
 			name: 'Forward char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdate(editor, () => {
-					editor.exec("goRight")
-				})
-			}
+				this.forwardChar(editor)
+			},
 		});
 
 		this.addCommand({
 			id: 'backward-char',
 			name: 'Backward char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdate(editor, () => {
-					editor.exec("goLeft")
-				})
+				this.backwardChar(editor)
 			}
 		});
 
@@ -262,54 +311,51 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.registerDomEvent(document, "keydown", (ev: KeyboardEvent) => {
-			console.log('Keydown', ev);
+			const keyPress: KeyPress = KeyPress.fromEvent(ev);
 
-			if (ev.ctrlKey || ev.key == "CapsLock") {
-				this.ctrlPressed = true;
-				console.log('Ctrl down');
-			}
-
-			if (!this.ctrlPressed) {
+			const editor = this.app.workspace.activeEditor?.editor
+			if (!editor) {
 				return;
 			}
 
-			const app = this.app as any;
-
-			if (ev.key == "f") {
-				app.commands.executeCommandById('emacs-text-editor:forward-char');
+			if (this.keyMap) {
+				const cb: EditorCb | undefined = this.keyMap.get(keyPress.text());
+				if (cb) {
+					cb.bind(this)(editor);
+				}
 				return;
 			}
 
-			if (ev.key == "b") {
-				app.commands.executeCommandById('emacs-text-editor:backward-char');
-				return;
-			}
-
-			if (ev.key == "n") {
-				app.commands.executeCommandById('emacs-text-editor:next-line');
-				return;
-			}
-
-			if (ev.key == "p") {
-				app.commands.executeCommandById('emacs-text-editor:previous-line');
-				return;
-			}
-
-		});
-		
-		this.registerDomEvent(document, "keyup", (ev: KeyboardEvent) => {
-			console.log('Keyup', ev);
-
-			if (ev.ctrlKey || ev.key == "CapsLock") {
-				this.ctrlPressed = false;
-				console.log('Ctrl up');
-			}
 		});
 
 	}
 
 	onunload() {
 		console.log('unloading plugin: Emacs text editor');
+	}
+
+	forwardChar(editor: Editor) {
+		this.withSelectionUpdate(editor, () => {
+			editor.exec("goRight")
+		})
+	}
+
+	backwardChar(editor: Editor) {
+		this.withSelectionUpdate(editor, () => {
+			editor.exec("goLeft")
+		})
+	}
+
+	nextLine(editor: Editor) {
+		this.withSelectionUpdate(editor, () => {
+			editor.exec("goDown")
+		})
+	}
+
+	previousLine(editor: Editor) {
+		this.withSelectionUpdate(editor, () => {
+			editor.exec("goUp")
+		})
 	}
 
 	disableSelection(editor: Editor) {
