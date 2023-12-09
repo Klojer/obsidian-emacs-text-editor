@@ -1,4 +1,4 @@
-import { Editor, EditorPosition, Plugin, MarkdownView } from "obsidian";
+import { App, Editor, EditorPosition, Plugin, PluginSettingTab, MarkdownView, Setting } from "obsidian";
 
 class KeyPress {
 	public readonly key: string;
@@ -44,23 +44,47 @@ class KeyPress {
 
 type EditorCb = (this: EmacsTextEditorPlugin, editor: Editor) => void;
 
+type EmacsCommandName = 'backwardChar' | 'backwardKillWord' |
+'backwardWord' | 'beginningOfBuffer' | 'deleteChar' | 'endOfBuffer' |
+'forwardChar' | 'forwardWord' | 'keyboardQuit' | 'killLine' | 'killRegion' |
+ 'killRingSave' | 'killWord' | 'moveBeginningOfLine' | 'moveEndOfLine' | 'nextLine' |
+ 'previousLine' | 'recenter' | 'redo' | 'setMarkCommand' | 'undo' | 'yank';
+
+interface PluginSettings {
+	keyEmacsCmdMap:  { [key: string]: EmacsCommandName } ;
+}
+
+const DEFAULT_SETTINGS: PluginSettings = {
+	keyEmacsCmdMap: {
+		"Ctrl + f": 'forwardChar',
+		"Ctrl + b": 'backwardChar',
+		"Ctrl + n": 'nextLine',
+		"Ctrl + p": 'previousLine',
+	}
+}
 
 export default class EmacsTextEditorPlugin extends Plugin {
 
 	// TODO: Consider possibility migrate to native selection mechanism
 	selectFrom?: EditorPosition = undefined
 
-	keyMap?: Map<string, EditorCb> = undefined;
+	settings: PluginSettings;
+	emacsCmdCallbackMap?: Map<EmacsCommandName, EditorCb> = undefined;
 
-	onload() {
+	async onload() {
 		console.log('loading plugin: Emacs text editor');
 
-		// TODO: try load keymap
-		this.keyMap = new Map<string, EditorCb>()
-		this.keyMap.set(new KeyPress("f", false, false, true, false).text(), this.forwardChar);
-		this.keyMap.set(new KeyPress("b", false, false, true, false).text(), this.backwardChar);
-		this.keyMap.set(new KeyPress("n", false, false, true, false).text(), this.nextLine);
-		this.keyMap.set(new KeyPress("p", false, false, true, false).text(), this.previousLine);
+		await this.loadSettings();
+
+		// TODO: replace with obj?
+		this.emacsCmdCallbackMap = new Map<EmacsCommandName, EditorCb>([
+			['forwardChar', this.forwardChar],
+			['backwardChar', this.backwardChar],
+			['nextLine', this.nextLine],
+			['previousLine', this.previousLine],
+		]);
+
+		this.addSettingTab(new EmacsTextEditorSettingTab(this.app, this));
 
 		this.addCommand({
 			id: 'forward-char',
@@ -318,20 +342,43 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				return;
 			}
 
-			if (this.keyMap) {
-				const cb: EditorCb | undefined = this.keyMap.get(keyPress.text());
-				if (cb) {
-					cb.bind(this)(editor);
-				}
+			const cmd: EmacsCommandName | undefined = this.settings.keyEmacsCmdMap[keyPress.text()];
+			console.log(this.settings.keyEmacsCmdMap);
+			console.log(keyPress.text());
+			if (!cmd) {
 				return;
 			}
 
+			const cb: EditorCb | undefined = this.emacsCmdCallbackMap?.get(cmd);
+			if (!cb) {
+				console.error("cannot find callback for Emacs Command ${cmd}")
+			}
+
+			if (cb) {
+				cb.bind(this)(editor);
+			}
+			return;
 		});
 
 	}
 
 	onunload() {
 		console.log('unloading plugin: Emacs text editor');
+	}
+
+	// TODO: check invalid CmdName load case
+	async loadSettings() {
+		const persistedSettings = await this.loadData()
+
+		if (!persistedSettings) {
+			this.settings = DEFAULT_SETTINGS;
+		} else {
+			this.settings = persistedSettings;
+		}
+	}
+
+	async saveSettings() {
+		await this.saveData(this.settings);
 	}
 
 	forwardChar(editor: Editor) {
@@ -392,4 +439,39 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		editor.replaceSelection("")
 	}
 
+}
+
+class EmacsTextEditorSettingTab extends PluginSettingTab {
+	plugin: EmacsTextEditorPlugin;
+
+	constructor(app: App, plugin: EmacsTextEditorPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	display(): void {
+		const { containerEl } = this;
+
+		containerEl.empty();
+
+		for (const currentKeyMap in this.plugin.settings.keyEmacsCmdMap) {
+			const cmd: EmacsCommandName = this.plugin.settings.keyEmacsCmdMap[currentKeyMap]
+			new Setting(containerEl)
+				.setName(cmd.toString())
+				.addText(text => text
+					.setPlaceholder('Enter keymap')
+					.setValue(currentKeyMap)
+					.onChange(async (newKeyMap) => {
+						// TODO: handle empty values
+						for (const [key, value] of Object.entries(this.plugin.settings.keyEmacsCmdMap)) {
+							if (value == cmd) {
+								delete this.plugin.settings.keyEmacsCmdMap[key];
+							}
+						}
+						// this.plugin.settings.keyEmacsCmdMap.delete(currentKeyMap);
+						this.plugin.settings.keyEmacsCmdMap[newKeyMap] = cmd;
+						await this.plugin.saveSettings();
+					}));
+		}
+	}
 }
