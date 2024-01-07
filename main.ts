@@ -269,7 +269,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'forward-paragraph',
 			name: 'Forward paragraph',
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
-				this.moveToNextParagraph(editor, Direction.Forward)
+				this.withSelectionUpdate(editor, () => {
+					this.moveToNextParagraph(editor, Direction.Forward)
+				})
 			}
 		});
 
@@ -277,7 +279,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'backward-paragraph',
 			name: 'Backward paragraph',
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
-				this.moveToNextParagraph(editor, Direction.Backward)
+				this.withSelectionUpdate(editor, () => {
+					this.moveToNextParagraph(editor, Direction.Backward)
+				})
 			}
 		});
 
@@ -326,16 +330,16 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		const value = editor.getValue();
 		const maxOffset = value.length;
 		const currentOffset = editor.posToOffset(cursor);
-	
+
 		if ((direction === Direction.Forward && currentOffset >= maxOffset) ||
 			(direction === Direction.Backward && currentOffset === 0)) {
 			return;
 		}
-	
+
 		let nextParagraphOffset = direction === Direction.Forward ? maxOffset : 0;
 		let foundText = false;
 		let foundFirstBreak = false;
-	
+
 		function isNewLine(position: number, direction: Direction): boolean {
 			if (direction === Direction.Forward) {
 				return value[position] === "\n" || (value[position] === "\r" && value[position + 1] === "\n");
@@ -343,15 +347,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				return value[position] === "\n" || (position > 0 && value[position - 1] === "\r" && value[position] === "\n");
 			}
 		}
-	
+
 		const step = direction === Direction.Forward ? 1 : -1;
 		let i = currentOffset;
-	
+
 		while ((direction === Direction.Forward && i < maxOffset) || (direction === Direction.Backward && i > 0)) {
 			if (foundText && isNewLine(i, direction)) {
 				if (foundFirstBreak) {
 					nextParagraphOffset = direction === Direction.Forward ? i : i + 1;
-					if ((direction === Direction.Forward && value[i] === "\r") || 
+					if ((direction === Direction.Forward && value[i] === "\r") ||
 						(direction === Direction.Backward && i > 0 && value[i - 1] === "\r")) {
 						nextParagraphOffset += direction === Direction.Forward ? 1 : -1;
 					}
@@ -364,14 +368,14 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			} else {
 				foundFirstBreak = false;
 			}
-	
+
 			if (value[i] !== "\n" && value[i] !== "\r" && value[i] !== " ") {
 				foundText = true;
 			}
-	
+
 			i += step;
 		}
-	
+
 		const newPos = editor.offsetToPos(nextParagraphOffset);
 		editor.setCursor(newPos);
 	}
