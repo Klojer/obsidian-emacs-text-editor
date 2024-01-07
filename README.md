@@ -34,11 +34,13 @@ make uninstall
 | ----------------------- | -------------------------- | ------------------------- |
 | Ctrl + b                | Backward char              | Move cursor one character backward |
 | Alt + Backspace         | Backward kill word         | Delete one word backward |
+| Alt + Shift + ]         | Backward paragraph         | Move cursor one paragraph backward |
 | Alt + b                 | Backward word              | Move cursor one word backward |
 | Alt + Shift + ,         | Beginning of buffer        | Move to the beginning of a buffer |
 | Ctrl + d                | Delete char                | Delete the following char |
 | Alt + Shift + .         | End of buffer              | Move to the end of a buffer |
 | Ctrl + f                | Forward char               | Move cursor one character forward |
+| Alt + Shift + [         | Forward paragraph          | Move cursor one paragraph forward |
 | Alt + f                 | Forward word               | Move cursor one word forward |
 | Ctrl + g                | Keyboard quit              | Signal a ‘quit’ condition (works only for selection) |
 | Ctrl + k                | Kill line                  | Kill the rest of the current line |
