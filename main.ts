@@ -1,5 +1,10 @@
 import { Editor, EditorPosition, Plugin, MarkdownView } from "obsidian";
 
+enum Direction {
+	Forward,
+	Backward
+}
+
 export default class EmacsTextEditorPlugin extends Plugin {
 
 	// TODO: Consider possibility migrate to native selection mechanism
@@ -133,7 +138,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: 'Delete char',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
-				
+
 				this.withDeleteInText(editor, () => {
 					editor.exec("goRight")
 				})
@@ -145,7 +150,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: 'Kill word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
-				
+
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordRight")
 				})
@@ -157,7 +162,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: 'Backward kill word',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor)
-				
+
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordLeft")
 				})
@@ -201,7 +206,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				const cursor = editor.getCursor()
 
 				if (this.selectFrom === undefined) {
-					editor.replaceRange(clipboardContent, cursor)					
+					editor.replaceRange(clipboardContent, cursor)
 				} else {
 					editor.replaceSelection(clipboardContent)
 					this.disableSelection(editor)
@@ -260,6 +265,22 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'forward-paragraph',
+			name: 'Forward paragraph',
+			editorCallback: async (editor: Editor, _: MarkdownView) => {
+				this.moveToNextParagraph(editor, Direction.Forward)
+			}
+		});
+
+		this.addCommand({
+			id: 'backward-paragraph',
+			name: 'Backward paragraph',
+			editorCallback: async (editor: Editor, _: MarkdownView) => {
+				this.moveToNextParagraph(editor, Direction.Backward)
+			}
+		});
+
 	}
 
 	onunload() {
@@ -298,6 +319,61 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 		editor.setSelection(cursorBefore, cursorAfter)
 		editor.replaceSelection("")
+	}
+
+	moveToNextParagraph(editor: Editor, direction: Direction) {
+		const cursor = editor.getCursor();
+		const value = editor.getValue();
+		const maxOffset = value.length;
+		const currentOffset = editor.posToOffset(cursor);
+	
+		if ((direction === Direction.Forward && currentOffset >= maxOffset) ||
+			(direction === Direction.Backward && currentOffset === 0)) {
+			return;
+		}
+	
+		let nextParagraphOffset = direction === Direction.Forward ? maxOffset : 0;
+		let foundText = false;
+		let foundFirstBreak = false;
+	
+		function isNewLine(position: number, direction: Direction): boolean {
+			if (direction === Direction.Forward) {
+				return value[position] === "\n" || (value[position] === "\r" && value[position + 1] === "\n");
+			} else {
+				return value[position] === "\n" || (position > 0 && value[position - 1] === "\r" && value[position] === "\n");
+			}
+		}
+	
+		const step = direction === Direction.Forward ? 1 : -1;
+		let i = currentOffset;
+	
+		while ((direction === Direction.Forward && i < maxOffset) || (direction === Direction.Backward && i > 0)) {
+			if (foundText && isNewLine(i, direction)) {
+				if (foundFirstBreak) {
+					nextParagraphOffset = direction === Direction.Forward ? i : i + 1;
+					if ((direction === Direction.Forward && value[i] === "\r") || 
+						(direction === Direction.Backward && i > 0 && value[i - 1] === "\r")) {
+						nextParagraphOffset += direction === Direction.Forward ? 1 : -1;
+					}
+					break;
+				} else {
+					foundFirstBreak = true;
+					i += step;
+					continue;
+				}
+			} else {
+				foundFirstBreak = false;
+			}
+	
+			if (value[i] !== "\n" && value[i] !== "\r" && value[i] !== " ") {
+				foundText = true;
+			}
+	
+			i += step;
+		}
+	
+		const newPos = editor.offsetToPos(nextParagraphOffset);
+		editor.setCursor(newPos);
 	}
 
 }
