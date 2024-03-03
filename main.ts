@@ -177,6 +177,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				}
 
 				navigator.clipboard.writeText(editor.getSelection())
+				document.dispatchEvent(new ClipboardEvent('copy'));
 
 				this.disableSelection(editor)
 			}
@@ -192,6 +193,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 				navigator.clipboard.writeText(editor.getSelection())
 				editor.replaceSelection("")
+				document.dispatchEvent(new ClipboardEvent('cut'));
 
 				this.disableSelection(editor)
 			}
@@ -212,6 +214,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				}
 
 				editor.setCursor(cursor.line, cursor.ch + clipboardContent.length)
+				document.dispatchEvent(new ClipboardEvent('paste'));
 			}
 		});
 
