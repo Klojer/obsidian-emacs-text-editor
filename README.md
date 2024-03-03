@@ -62,3 +62,7 @@ make uninstall
 
 1. Move to beginning of line command (Ctrl + a) conflicts with select all action. Solution: Use Home/End + Shift.
 2. Conflicts with existing hotkeys. Solution: use additional plugin for custom bindings, for example https://github.com/tgrosinger/leader-hotkeys-obsidian
+3. Absent support of "kill-ring". Solution: use plugin https://github.com/Karakaz/obsidian-paste-from-history with `Alt + y` keybinding
+4. Absent support of scroll-up/scroll-down commands. Solution is not found
+5. Absent support of holding shortcuts. Solution is not found
+
