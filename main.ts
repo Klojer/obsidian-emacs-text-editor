@@ -7,8 +7,7 @@ enum Direction {
 
 export default class EmacsTextEditorPlugin extends Plugin {
 
-	// TODO: Consider possibility migrate to native selection mechanism
-	selectFrom?: EditorPosition = undefined
+	pluginTriggerSelection = false
 
 	onload() {
 		console.log('loading plugin: Emacs text editor');
@@ -173,7 +172,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'kill-ring-save',
 			name: 'Kill ring save',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				if (this.selectFrom === undefined) {
+				if (!this.getCurrentSelectionStart(editor)) {
 					return
 				}
 
@@ -187,7 +186,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'kill-region',
 			name: 'Kill region',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				if (this.selectFrom === undefined) {
+				if (!this.getCurrentSelectionStart(editor)) {
 					return
 				}
 
@@ -205,7 +204,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				const clipboardContent = await navigator.clipboard.readText()
 				const cursor = editor.getCursor()
 
-				if (this.selectFrom === undefined) {
+				if (!this.getCurrentSelectionStart(editor)) {
 					editor.replaceRange(clipboardContent, cursor)
 				} else {
 					editor.replaceSelection(clipboardContent)
@@ -220,11 +219,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'set-mark-command',
 			name: 'Set mark command',
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				if (this.selectFrom === undefined) {
-					this.selectFrom = editor.getCursor()
-				} else {
+				if (this.pluginTriggerSelection) {
 					this.disableSelection(editor)
 				}
+				this.pluginTriggerSelection = !this.pluginTriggerSelection
 			}
 		});
 
@@ -293,25 +291,39 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	disableSelection(editor: Editor) {
 		editor.setSelection(editor.getCursor(), editor.getCursor())
-		this.selectFrom = undefined
+		this.pluginTriggerSelection = false
 	}
 
 	withSelectionUpdate(editor: Editor, callback: () => void) {
-		if (this.selectFrom !== undefined) {
+		const currentSelectionStart = this.getCurrentSelectionStart(editor);
+		if (currentSelectionStart) {
 			editor.setSelection(editor.getCursor())
 		}
 
 		callback()
 
-		this.updateSelectionIsNeed(editor)
+		if (currentSelectionStart) {
+			editor.setSelection(currentSelectionStart, editor.getCursor())
+		}
 	}
 
-	updateSelectionIsNeed(editor: Editor) {
-		if (this.selectFrom === undefined) {
-			return
+	getCurrentSelectionStart(editor: Editor): EditorPosition | undefined {
+		const selections = editor.listSelections()
+
+		if (selections.length == 0) {
+			return undefined
 		}
 
-		editor.setSelection(this.selectFrom, editor.getCursor())
+		if (selections[0].anchor.line !== selections[0].head.line ||
+			selections[0].anchor.ch !== selections[0].head.ch) {
+			return selections[0].anchor
+		}
+
+		if (this.pluginTriggerSelection) {
+			return selections[0].anchor
+		}
+
+		return undefined
 	}
 
 	withDeleteInText(editor: Editor, callback: () => void) {
