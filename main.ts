@@ -224,8 +224,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				if (this.pluginTriggerSelection) {
 					this.disableSelection(editor)
+				} else {
+					this.pluginTriggerSelection = true
 				}
-				this.pluginTriggerSelection = !this.pluginTriggerSelection
 			}
 		});
 
