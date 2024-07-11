@@ -8,9 +8,16 @@ enum Direction {
 export default class EmacsTextEditorPlugin extends Plugin {
 
 	pluginTriggerSelection = false
+	disableSelectionWhenPossible = false;
 
 	onload() {
 		console.log('loading plugin: Emacs text editor');
+
+		document.addEventListener('keydown',(e) =>{
+			if (e.code == 'Backspace'){
+				this.disableSelectionWhenPossible = true;
+			}
+		});
 
 		this.addCommand({
 			id: 'forward-char',
@@ -294,11 +301,16 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	disableSelection(editor: Editor) {
-		editor.setSelection(editor.getCursor(), editor.getCursor())
-		this.pluginTriggerSelection = false
+		editor.setSelection(editor.getCursor(), editor.getCursor());
+		this.pluginTriggerSelection = false;
+		this.disableSelectionWhenPossible = false;
 	}
 
 	withSelectionUpdate(editor: Editor, callback: () => void) {
+		if (this.disableSelectionWhenPossible) {
+			this.disableSelection(editor);
+		}
+
 		const currentSelectionStart = this.getCurrentSelectionStart(editor);
 		if (currentSelectionStart) {
 			editor.setSelection(editor.getCursor())
