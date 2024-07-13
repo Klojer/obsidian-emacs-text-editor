@@ -5,6 +5,11 @@ enum Direction {
 	Backward,
 }
 
+enum CopyCut {
+	Copy,
+	Cut,
+}
+
 const insertableSpecialKeys = [
 	"Comma",
 	"Period",
@@ -186,8 +191,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-word",
 			name: "Kill word",
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.disableSelection(editor);
-
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordRight");
 				});
@@ -198,8 +201,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "backward-kill-word",
 			name: "Backward kill word",
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.disableSelection(editor);
-
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordLeft");
 				});
@@ -210,14 +211,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-ring-save",
 			name: "Kill ring save",
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				if (!this.getCurrentSelectionStart(editor)) {
-					return;
-				}
-
-				navigator.clipboard.writeText(editor.getSelection());
-				document.dispatchEvent(new ClipboardEvent("copy"));
-
-				this.disableSelection(editor);
+				this.putSelectionInClipboard(editor, CopyCut.Copy);
 			},
 		});
 
@@ -225,15 +219,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-region",
 			name: "Kill region",
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				if (!this.getCurrentSelectionStart(editor)) {
-					return;
-				}
-
-				navigator.clipboard.writeText(editor.getSelection());
-				editor.replaceSelection("");
-				document.dispatchEvent(new ClipboardEvent("cut"));
-
-				this.disableSelection(editor);
+				this.putSelectionInClipboard(editor, CopyCut.Cut);
 			},
 		});
 
@@ -386,7 +372,25 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		const cursorAfter = editor.getCursor();
 
 		editor.setSelection(cursorBefore, cursorAfter);
-		editor.replaceSelection("");
+
+		this.putSelectionInClipboard(editor, CopyCut.Cut);
+	}
+
+	putSelectionInClipboard(editor: Editor, mode: CopyCut) {
+		if (!this.getCurrentSelectionStart(editor)) {
+			return;
+		}
+
+		navigator.clipboard.writeText(editor.getSelection());
+
+		if (mode == CopyCut.Copy) {
+			document.dispatchEvent(new ClipboardEvent("copy"));
+		} else if (mode == CopyCut.Cut) {
+			editor.replaceSelection("");
+			document.dispatchEvent(new ClipboardEvent("cut"));
+		}
+
+		this.disableSelection(editor);
 	}
 
 	moveToNextParagraph(editor: Editor, direction: Direction) {
