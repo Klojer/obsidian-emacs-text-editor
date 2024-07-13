@@ -166,10 +166,11 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				if (lineContent === "") {
 					editor.exec("deleteLine");
 				} else {
-					editor.setLine(
-						cursor.line,
-						lineContent.substring(0, cursor.ch),
-					);
+					editor.setSelection(cursor, {
+						line: cursor.line,
+						ch: lineContent.length,
+					});
+					this.putSelectionInClipboard(editor, CopyCut.Cut);
 					editor.setCursor(cursor);
 				}
 			},
