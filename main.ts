@@ -5,12 +5,44 @@ enum Direction {
 	Backward,
 }
 
+const insertableSpecialKeys = [
+	"Comma",
+	"Period",
+	"Slash",
+	"Semicolon",
+	"Quote",
+	"BracketLeft",
+	"BracketRight",
+	"Backslash",
+	"Backquote",
+	"Minus",
+	"Equal",
+];
+
+function isEventInterruptSelection(e: KeyboardEvent): boolean {
+	return (
+		e.code == "Backspace" ||
+		e.code == "Delete" ||
+		Boolean(e.code.match(/^Key[A-Z]$/)) ||
+		Boolean(e.code.match(/^Digit[0-9]$/)) ||
+		Boolean(e.code.match(/^Numpad[0-9]$/)) ||
+		insertableSpecialKeys.includes(e.code)
+	);
+}
+
 export default class EmacsTextEditorPlugin extends Plugin {
 	pluginTriggerSelection = false;
 	disableSelectionWhenPossible = false;
 
 	onload() {
 		console.log("loading plugin: Emacs text editor");
+
+		document.addEventListener("keydown", (e) => {
+			if (isEventInterruptSelection(e)) {
+				this.disableSelectionWhenPossible = true;
+				this.pluginTriggerSelection = false;
+			}
+		});
 
 		this.addCommand({
 			id: "forward-char",
@@ -235,8 +267,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 					this.disableSelection(editor);
 				} else {
 					this.pluginTriggerSelection = true;
-					this.disableSelectionWhenPossible = false;
 				}
+				this.disableSelectionWhenPossible = false;
 			},
 		});
 
