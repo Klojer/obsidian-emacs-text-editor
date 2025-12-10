@@ -567,9 +567,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	deleteOneChar(editor: Editor) {
-		this.withDeleteInText(editor, () => {
-			editor.exec("goRight");
-		});
+	  this.withDeleteInText(editor, () => {
+		editor.exec("goRight");
+	  }, false);
 	}
 
 	killOneWord(editor: Editor) {
@@ -652,7 +652,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		return undefined;
 	}
 
-	withDeleteInText(editor: Editor, callback: () => void) {
+
+	withDeleteInText(editor: Editor, callback: () => void,
+		putIntoClipboard: boolean = true) {
+		
 		const cursorBefore = editor.getCursor();
 
 		callback();
@@ -661,7 +664,11 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 		editor.setSelection(cursorBefore, cursorAfter);
 
-		this.putSelectionInClipboard(editor, CopyCut.Cut);
+		if (putIntoClipboard) {
+			this.putSelectionInClipboard(editor, CopyCut.Cut);
+		} else {
+			editor.replaceSelection("");
+		}
 	}
 
 	putSelectionInClipboard(editor: Editor, mode: CopyCut) {
@@ -893,7 +900,7 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 
 		buttonContainer.createEl('button', { text: 'Fast' })
 			.addEventListener('click', async () => {
-				this.plugin.settings.keyRepeatDelay = 25;
+		  this.plugin.settings.keyRepeatDelay = 25;
 				this.plugin.settings.keyRepeatInterval = 25;
 				await this.plugin.saveSettings();
 				this.display();
