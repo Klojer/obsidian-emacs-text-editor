@@ -65,9 +65,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		// Things that stop repeat
 
 		// stop holding a key down
-		this.registerDomEvent(document, "keyup", (e: KeyboardEvent) => {
-			const keyId = this.getKeyId(e);
-			this.stopKeyRepeat(keyId);
+		this.registerDomEvent(document, "keyup", () => {
+			this.stopAllKeyRepeats();
 		});
 
 		// change window focus
