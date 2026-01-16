@@ -74,9 +74,9 @@ When enabled in Settings → Community plugins → Emacs text editor, the follow
 - **Character movement:** Ctrl+F, Ctrl+B
 - **Line movement:** Ctrl+N, Ctrl+P  
 - **Word movement:** Alt+F, Alt+B
-  **Character, Word Deletion**: Ctrl+D, Alt+D
+- **Character, Word Deletion**: Ctrl+D, Alt+D
 
-In the Settings, you can also adjust the initial repeat delay or interval, or use quick presets (Slow/Medium/Fast).  This repeat mechanism works around Obsidian API limitations which prevent changing ctrl or alt key repeats.  It is separate from your OS keyboard repeat controls; changing repeat timing here affects only Obsidian hotkey hotkey behavior.
+In the Settings, you can also adjust the initial repeat delay or interval, or use quick presets (Slow/Medium/Fast).  This repeat mechanism works around Obsidian API limitations which prevent changing ctrl or alt key repeats.  It is separate from your OS keyboard repeat controls; changing repeat timing here affects only Obsidian hotkey behavior.
 
 ## Known issues
 
