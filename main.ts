@@ -1,5 +1,12 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
 
+// Regex constants for consistent pattern matching
+const WORD_CHAR_REGEX = /\w/u;
+const KEY_CODE_KEY_REGEX = /^Key[A-Z]$/u;
+const KEY_CODE_DIGIT_REGEX = /^Digit[0-9]$/u;
+const KEY_CODE_NUMPAD_REGEX = /^Numpad[0-9]$/u;
+const WORD_BOUNDARY_REGEX = /\b/gu;
+
 interface EmacsKeyRepeatSettings {
 	enableKeyRepeat: boolean;
 	keyRepeatDelay: number;
@@ -38,7 +45,7 @@ const insertableSpecialKeys = [
 
 export default class EmacsTextEditorPlugin extends Plugin {
 	settings: EmacsKeyRepeatSettings;
-	pluginTriggerSelection = false;
+	private markPosition: EditorPosition | undefined;
 	disableSelectionWhenPossible = false;
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
@@ -54,7 +61,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.registerDomEvent(document, "keydown", (e) => {
 			if (isEventInterruptSelection(e)) {
 				this.disableSelectionWhenPossible = true;
-				this.pluginTriggerSelection = false;
+				this.markPosition = undefined;
 			}
 
 			if (this.settings.enableKeyRepeat) {
@@ -78,6 +85,12 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
 			this.stopAllKeyRepeats();
 		}));
+
+		// Mouse click cancels mark mode (same as keyboard-quit)
+		this.registerDomEvent(document, "mousedown", () => {
+			this.markPosition = undefined;
+			this.disableSelectionWhenPossible = false;
+		});
 
 		this.addCommand({
 			id: "forward-char",
@@ -138,14 +151,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Move end of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'e' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdate(editor, () => {
-					const cursor = editor.getCursor();
-					const lineContent = editor.getLine(cursor.line);
-					editor.setCursor({
-						line: cursor.line,
-						ch: lineContent.length,
-					});
-				});
+				this.withSelectionUpdateDirect(editor,
+					(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
+				);
 			},
 		});
 
@@ -154,10 +162,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Move cursor to beginning of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdate(editor, () => {
-					const cursor = editor.getCursor();
-					editor.setCursor({ line: cursor.line, ch: 0 });
-				});
+				this.withSelectionUpdateDirect(editor,
+					(head) => ({ line: head.line, ch: 0 }),
+				);
 			},
 		});
 
@@ -166,9 +173,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Beginning of buffer",
 			hotkeys: [{ modifiers: ['Alt', 'Shift'], key: ',' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdate(editor, () => {
-					editor.exec("goStart");
-				});
+				this.withSelectionUpdateDirect(editor,
+					() => ({ line: 0, ch: 0 }),
+				);
 			},
 		});
 
@@ -177,9 +184,12 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "End of buffer",
 			hotkeys: [{ modifiers: ['Alt', 'Shift'], key: '.' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdate(editor, () => {
-					editor.exec("goEnd");
-				});
+				this.withSelectionUpdateDirect(editor,
+					() => {
+						const lastLine = editor.lineCount() - 1;
+						return { line: lastLine, ch: editor.getLine(lastLine).length };
+					},
+				);
 			},
 		});
 
@@ -281,10 +291,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Set mark command",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'Space' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				if (this.pluginTriggerSelection) {
+				if (this.markPosition) {
 					this.disableSelection(editor);
 				} else {
-					this.pluginTriggerSelection = true;
+					this.markPosition = editor.getCursor();
 				}
 				this.disableSelectionWhenPossible = false;
 			},
@@ -560,8 +570,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	moveForwardOneChar(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goRight");
+		this.withSelectionUpdateDirect(editor, (head) => {
+			const offset = editor.posToOffset(head);
+			const maxOffset = editor.getValue().length;
+			return offset < maxOffset ? editor.offsetToPos(offset + 1) : head;
 		});
 	}
 
@@ -578,59 +590,114 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	moveBackOneChar(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goLeft");
+		this.withSelectionUpdateDirect(editor, (head) => {
+			const offset = editor.posToOffset(head);
+			return offset > 0 ? editor.offsetToPos(offset - 1) : head;
 		});
 	}
 
 	moveNextLine(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goDown");
+		this.withSelectionUpdateDirect(editor, (head) => {
+			if (head.line < editor.lineCount() - 1) {
+				const nextLineLen = editor.getLine(head.line + 1).length;
+				return { line: head.line + 1, ch: Math.min(head.ch, nextLineLen) };
+			}
+			return head;
 		});
 	}
 
 	movePreviousLine(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goUp");
+		this.withSelectionUpdateDirect(editor, (head) => {
+			if (head.line > 0) {
+				const prevLineLen = editor.getLine(head.line - 1).length;
+				return { line: head.line - 1, ch: Math.min(head.ch, prevLineLen) };
+			}
+			return head;
 		});
 	}
 
 	moveForwardOneWord(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goWordRight");
+		this.withSelectionUpdateDirect(editor, (head) => {
+			const doc = editor.getValue();
+			let offset = editor.posToOffset(head);
+			const len = doc.length;
+			// Skip non-word characters, then skip word characters
+			while (offset < len && !WORD_CHAR_REGEX.test(doc[offset])) offset++;
+			while (offset < len && WORD_CHAR_REGEX.test(doc[offset])) offset++;
+			return editor.offsetToPos(offset);
 		});
 	}
 
 	moveBackOneWord(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goWordLeft");
+		this.withSelectionUpdateDirect(editor, (head) => {
+			const doc = editor.getValue();
+			let offset = editor.posToOffset(head);
+			// Skip non-word characters backwards, then skip word characters backwards
+			while (offset > 0 && !WORD_CHAR_REGEX.test(doc[offset - 1])) offset--;
+			while (offset > 0 && WORD_CHAR_REGEX.test(doc[offset - 1])) offset--;
+			return editor.offsetToPos(offset);
 		});
 	}
 
 	disableSelection(editor: Editor) {
 		editor.setSelection(editor.getCursor(), editor.getCursor());
-		this.pluginTriggerSelection = false;
+		this.markPosition = undefined;
 		this.disableSelectionWhenPossible = false;
 	}
 
-	withSelectionUpdate(editor: Editor, callback: () => void) {
+	withSelectionUpdate(
+		editor: Editor,
+		callback: () => void,
+		directMove?: (head: EditorPosition) => EditorPosition,
+	) {
 		if (this.disableSelectionWhenPossible) {
 			this.disableSelection(editor);
 		}
 
 		const currentSelectionStart = this.getCurrentSelectionStart(editor);
-		if (currentSelectionStart) {
+
+		if (currentSelectionStart && directMove) {
+			// Direct computation: set selection in a single call to avoid
+			// intermediate collapse that causes live preview link re-rendering glitches
+			const newHead = directMove(editor.getCursor());
+			editor.setSelection(currentSelectionStart, newHead);
+		} else if (currentSelectionStart) {
+			// Fallback: collapse, move via callback, re-expand
 			editor.setSelection(editor.getCursor());
+			callback();
+			editor.setSelection(currentSelectionStart, editor.getCursor());
+		} else {
+			callback();
+		}
+	}
+
+	withSelectionUpdateDirect(
+		editor: Editor,
+		directMove: (head: EditorPosition) => EditorPosition,
+	) {
+		if (this.disableSelectionWhenPossible) {
+			this.disableSelection(editor);
 		}
 
-		callback();
+		const currentSelectionStart = this.getCurrentSelectionStart(editor);
+		const newHead = directMove(editor.getCursor());
 
 		if (currentSelectionStart) {
-			editor.setSelection(currentSelectionStart, editor.getCursor());
+			editor.setSelection(currentSelectionStart, newHead);
+		} else {
+			editor.setCursor(newHead);
 		}
 	}
 
 	getCurrentSelectionStart(editor: Editor): EditorPosition | undefined {
+		// If mark was explicitly set, always use the stored position.
+		// This prevents the mark from being lost when the editor
+		// internally collapses the selection during rapid key repeat.
+		if (this.markPosition) {
+			return this.markPosition;
+		}
+
+		// Otherwise, check for existing selection (from mouse or shift+arrows)
 		const selections = editor.listSelections();
 
 		if (selections.length == 0) {
@@ -641,10 +708,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			selections[0].anchor.line !== selections[0].head.line ||
 			selections[0].anchor.ch !== selections[0].head.ch
 		) {
-			return selections[0].anchor;
-		}
-
-		if (this.pluginTriggerSelection) {
 			return selections[0].anchor;
 		}
 
@@ -772,11 +835,11 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		let ch = cursor.ch;
 
 		// Find word boundaries
-		while (ch < line.length && !/\w/.test(line[ch])) {
+		while (ch < line.length && !WORD_CHAR_REGEX.test(line[ch])) {
 			ch++;
 		}
 		const start = ch;
-		while (ch < line.length && /\w/.test(line[ch])) {
+		while (ch < line.length && WORD_CHAR_REGEX.test(line[ch])) {
 			ch++;
 		}
 		const end = ch;
@@ -912,9 +975,9 @@ function isEventInterruptSelection(e: KeyboardEvent): boolean {
 	return (
 		e.code == "Backspace" ||
 		e.code == "Delete" ||
-		(Boolean(e.code.match(/^Key[A-Z]$/)) && !withKeyModifier) ||
-		(Boolean(e.code.match(/^Digit[0-9]$/)) && !withKeyModifier) ||
-		(Boolean(e.code.match(/^Numpad[0-9]$/)) && !withKeyModifier) ||
+		(KEY_CODE_KEY_REGEX.test(e.code) && !withKeyModifier) ||
+		(KEY_CODE_DIGIT_REGEX.test(e.code) && !withKeyModifier) ||
+		(KEY_CODE_NUMPAD_REGEX.test(e.code) && !withKeyModifier) ||
 		(insertableSpecialKeys.includes(e.code) && !withKeyModifier)
 	);
 }
@@ -924,9 +987,9 @@ function capitalizeOneWord(word: string): string {
 }
 
 function capitalizeWords(selection: string): string {
-	const words = selection.split(/\b/);
+	const words = selection.split(WORD_BOUNDARY_REGEX);
 	const capitalizedWords = words.map(word => {
-		if (/\w/.test(word)) {
+		if (WORD_CHAR_REGEX.test(word)) {
 			return capitalizeOneWord(word);
 		}
 		return word;
