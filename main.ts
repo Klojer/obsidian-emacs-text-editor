@@ -597,22 +597,14 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	moveNextLine(editor: Editor) {
-		this.withSelectionUpdateDirect(editor, (head) => {
-			if (head.line < editor.lineCount() - 1) {
-				const nextLineLen = editor.getLine(head.line + 1).length;
-				return { line: head.line + 1, ch: Math.min(head.ch, nextLineLen) };
-			}
-			return head;
+		this.withSelectionUpdate(editor, () => {
+			editor.exec("goDown"); // visual screen lines down, not string
 		});
 	}
 
 	movePreviousLine(editor: Editor) {
-		this.withSelectionUpdateDirect(editor, (head) => {
-			if (head.line > 0) {
-				const prevLineLen = editor.getLine(head.line - 1).length;
-				return { line: head.line - 1, ch: Math.min(head.ch, prevLineLen) };
-			}
-			return head;
+		this.withSelectionUpdate(editor, () => {
+			editor.exec("goUp");  // visual screen lines up, not string
 		});
 	}
 
