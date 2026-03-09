@@ -1,5 +1,6 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
 import { EditorView } from "@codemirror/view";
+import { EditorSelection } from "@codemirror/state";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -50,6 +51,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	disableSelectionWhenPossible = false;
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
+
+	public moveToEndRecently: boolean = false;
+	private moveToEndTimer: NodeJS.Timeout | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -155,19 +159,49 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				const view = (this.app.workspace.activeLeaf?.view as any)?.editor?.cm as EditorView | undefined;
 				if (view) {
 					const selection = view.state.selection.main;
-					const newRange = view.moveToLineBoundary(selection, true);
+					// Pass a cursor at the head position with current assoc to get accurate visual line boundary
+					const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
+					const newRange = view.moveToLineBoundary(headCursor, true);
 					
 					if (this.disableSelectionWhenPossible) {
 						this.disableSelection(editor);
 					}
 					
 					const currentSelectionStart = this.getCurrentSelectionStart(editor);
-					const newHead = editor.offsetToPos(newRange.head);
+
+					// Signal to the visible cursor plugin that a move-to-end-of-line
+					// action is in progress. This flag is read by the visible cursor
+					// plugin's buildDecorations to correctly identify soft-wrap ends
+					// (which share assoc=-1 with soft-wrap starts, making the flag the
+					// only reliable discriminator). Set it before view.dispatch() so
+					// that it's true when buildDecorations runs during the dispatch.
+					this.moveToEndRecently = true;
+					if (this.moveToEndTimer) clearTimeout(this.moveToEndTimer);
+					this.moveToEndTimer = setTimeout(() => {
+						this.moveToEndRecently = false;
+						this.moveToEndTimer = null;
+					}, 100);
 					
 					if (currentSelectionStart) {
-						editor.setSelection(currentSelectionStart, newHead);
+						const anchorOffset = editor.posToOffset(currentSelectionStart);
+						// For selections, create range with assoc on the head position
+						const newSelection = EditorSelection.create([
+							EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
+						]);
+						view.dispatch({
+							selection: newSelection,
+							scrollIntoView: true
+						});
 					} else {
-						editor.setCursor(newHead);
+						// For end-of-line, use assoc = -1 to render cursor at end of current visual line
+						// (not at start of next visual line)
+						const newSelection = EditorSelection.create([
+							EditorSelection.cursor(newRange.head, -1)
+						]);
+						view.dispatch({
+							selection: newSelection,
+							scrollIntoView: true
+						});
 					}
 				} else {
 					this.withSelectionUpdateDirect(editor,
@@ -185,19 +219,31 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				const view = (this.app.workspace.activeLeaf?.view as any)?.editor?.cm as EditorView | undefined;
 				if (view) {
 					const selection = view.state.selection.main;
-					const newRange = view.moveToLineBoundary(selection, false);
+					// Pass a cursor at the head position with current assoc to get accurate visual line boundary
+					const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
+					const newRange = view.moveToLineBoundary(headCursor, false);
 					
 					if (this.disableSelectionWhenPossible) {
 						this.disableSelection(editor);
 					}
 					
 					const currentSelectionStart = this.getCurrentSelectionStart(editor);
-					const newHead = editor.offsetToPos(newRange.head);
 					
 					if (currentSelectionStart) {
-						editor.setSelection(currentSelectionStart, newHead);
+						const anchorOffset = editor.posToOffset(currentSelectionStart);
+						const newSelection = EditorSelection.create([
+							EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
+						]);
+						view.dispatch({
+							selection: newSelection,
+							scrollIntoView: true
+						});
 					} else {
-						editor.setCursor(newHead);
+						// Don't pass assoc - let CodeMirror render cursor naturally
+						view.dispatch({
+							selection: { anchor: newRange.head },
+							scrollIntoView: true
+						});
 					}
 				} else {
 					this.withSelectionUpdateDirect(editor,
@@ -487,6 +533,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	onunload() {
 		console.log("unloading plugin: Emacs text editor");
 		this.stopAllKeyRepeats();
+		if (this.moveToEndTimer) clearTimeout(this.moveToEndTimer);
 	}
 
 	async loadSettings() {
