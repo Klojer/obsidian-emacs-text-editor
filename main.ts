@@ -1,4 +1,5 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
+import { EditorView } from "@codemirror/view";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -151,9 +152,28 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Move end of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'e' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdateDirect(editor,
-					(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
-				);
+				const view = (this.app.workspace.activeLeaf?.view as any)?.editor?.cm as EditorView | undefined;
+				if (view) {
+					const selection = view.state.selection.main;
+					const newRange = view.moveToLineBoundary(selection, true);
+					
+					if (this.disableSelectionWhenPossible) {
+						this.disableSelection(editor);
+					}
+					
+					const currentSelectionStart = this.getCurrentSelectionStart(editor);
+					const newHead = editor.offsetToPos(newRange.head);
+					
+					if (currentSelectionStart) {
+						editor.setSelection(currentSelectionStart, newHead);
+					} else {
+						editor.setCursor(newHead);
+					}
+				} else {
+					this.withSelectionUpdateDirect(editor,
+						(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
+					);
+				}
 			},
 		});
 
@@ -162,9 +182,28 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Move cursor to beginning of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdateDirect(editor,
-					(head) => ({ line: head.line, ch: 0 }),
-				);
+				const view = (this.app.workspace.activeLeaf?.view as any)?.editor?.cm as EditorView | undefined;
+				if (view) {
+					const selection = view.state.selection.main;
+					const newRange = view.moveToLineBoundary(selection, false);
+					
+					if (this.disableSelectionWhenPossible) {
+						this.disableSelection(editor);
+					}
+					
+					const currentSelectionStart = this.getCurrentSelectionStart(editor);
+					const newHead = editor.offsetToPos(newRange.head);
+					
+					if (currentSelectionStart) {
+						editor.setSelection(currentSelectionStart, newHead);
+					} else {
+						editor.setCursor(newHead);
+					}
+				} else {
+					this.withSelectionUpdateDirect(editor,
+						(head) => ({ line: head.line, ch: 0 }),
+					);
+				}
 			},
 		});
 
