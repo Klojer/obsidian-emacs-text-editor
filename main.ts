@@ -238,13 +238,16 @@ export default class EmacsTextEditorPlugin extends Plugin {
 							selection: newSelection,
 							scrollIntoView: true
 						});
-					} else {
-						// Don't pass assoc - let CodeMirror render cursor naturally
-						view.dispatch({
-							selection: { anchor: newRange.head },
-							scrollIntoView: true
-						});
-					}
+				} else {
+					// Keep the assoc flag so CodeMirror knows which visual line the cursor is on
+					const newSelection = EditorSelection.create([
+						EditorSelection.cursor(newRange.head, newRange.assoc)
+					]);
+					view.dispatch({
+						selection: newSelection,
+						scrollIntoView: true
+					});
+				}
 				} else {
 					this.withSelectionUpdateDirect(editor,
 						(head) => ({ line: head.line, ch: 0 }),
