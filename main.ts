@@ -1,6 +1,6 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
 import { EditorView } from "@codemirror/view";
-import { EditorSelection } from "@codemirror/state";
+import { EditorSelection, Transaction } from "@codemirror/state";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -51,9 +51,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	disableSelectionWhenPossible = false;
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
-
-	public moveToEndRecently: boolean = false;
-	private moveToEndTimer: NodeJS.Timeout | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -169,19 +166,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 					
 					const currentSelectionStart = this.getCurrentSelectionStart(editor);
 
-					// Signal to the visible cursor plugin that a move-to-end-of-line
-					// action is in progress. This flag is read by the visible cursor
-					// plugin's buildDecorations to correctly identify soft-wrap ends
-					// (which share assoc=-1 with soft-wrap starts, making the flag the
-					// only reliable discriminator). Set it before view.dispatch() so
-					// that it's true when buildDecorations runs during the dispatch.
-					this.moveToEndRecently = true;
-					if (this.moveToEndTimer) clearTimeout(this.moveToEndTimer);
-					this.moveToEndTimer = setTimeout(() => {
-						this.moveToEndRecently = false;
-						this.moveToEndTimer = null;
-					}, 100);
-					
 					if (currentSelectionStart) {
 						const anchorOffset = editor.posToOffset(currentSelectionStart);
 						// For selections, create range with assoc on the head position
@@ -190,7 +174,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 						]);
 						view.dispatch({
 							selection: newSelection,
-							scrollIntoView: true
+							scrollIntoView: true,
+							annotations: Transaction.userEvent.of("emacs.moveToEnd"),
 						});
 					} else {
 						// For end-of-line, use assoc = -1 to render cursor at end of current visual line
@@ -200,7 +185,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 						]);
 						view.dispatch({
 							selection: newSelection,
-							scrollIntoView: true
+							scrollIntoView: true,
+							annotations: Transaction.userEvent.of("emacs.moveToEnd"),
 						});
 					}
 				} else {
@@ -536,7 +522,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	onunload() {
 		console.log("unloading plugin: Emacs text editor");
 		this.stopAllKeyRepeats();
-		if (this.moveToEndTimer) clearTimeout(this.moveToEndTimer);
 	}
 
 	async loadSettings() {
