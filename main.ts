@@ -1,7 +1,7 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
 
 // Regex constants for consistent pattern matching
-const WORD_CHAR_REGEX = /\w/u;
+const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
 const KEY_CODE_KEY_REGEX = /^Key[A-Z]$/u;
 const KEY_CODE_DIGIT_REGEX = /^Digit[0-9]$/u;
 const KEY_CODE_NUMPAD_REGEX = /^Numpad[0-9]$/u;
