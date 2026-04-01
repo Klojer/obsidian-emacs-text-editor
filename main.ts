@@ -517,6 +517,14 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				this.transformDWIM(editor, capitalizeOneWord, capitalizeWords);
 			}
 		});
+
+		this.addCommand({
+			id: "transpose-chars",
+			name: "Transpose chars",
+			editorCallback: (editor: Editor, _: MarkdownView) => {
+				this.transposeChars(editor);
+			},
+		});
 	}
 
 	onunload() {
@@ -944,6 +952,37 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		} else {
 			this.transformWordAtCursor(editor, transformOneWord);
 		}
+	}
+
+	transposeChars(editor: Editor) {
+		this.disableSelection(editor);
+
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+
+		if (line.length < 2 || cursor.ch === 0) {
+			return;
+		}
+
+		const swapRightIndex = cursor.ch < line.length ? cursor.ch : line.length - 1;
+		const swapLeftIndex = swapRightIndex - 1;
+
+		const transposedLine =
+			line.slice(0, swapLeftIndex) +
+			line[swapRightIndex] +
+			line[swapLeftIndex] +
+			line.slice(swapRightIndex + 1);
+
+		editor.replaceRange(
+			transposedLine,
+			{ line: cursor.line, ch: 0 },
+			{ line: cursor.line, ch: line.length },
+		);
+
+		editor.setCursor({
+			line: cursor.line,
+			ch: Math.min(swapRightIndex + 1, transposedLine.length),
+		});
 	}
 }
 
