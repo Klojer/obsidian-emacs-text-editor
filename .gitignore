@@ -19,6 +19,9 @@ main.js
 # Exclude sourcemaps
 *.map
 
+# TypeScript incremental build artifacts
+*.tsbuildinfo
+
 # obsidian
 data.json
 

@@ -152,43 +152,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "move-end-of-line",
 			name: "Move end of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'e' }],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				const view = (this.app.workspace.activeLeaf?.view as any)?.editor?.cm as EditorView | undefined;
+			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
-					const selection = view.state.selection.main;
-					// Pass a cursor at the head position with current assoc to get accurate visual line boundary
-					const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
-					const newRange = view.moveToLineBoundary(headCursor, true);
-					
-					if (this.disableSelectionWhenPossible) {
-						this.disableSelection(editor);
-					}
-					
-					const currentSelectionStart = this.getCurrentSelectionStart(editor);
-
-					if (currentSelectionStart) {
-						const anchorOffset = editor.posToOffset(currentSelectionStart);
-						// For selections, create range with assoc on the head position
-						const newSelection = EditorSelection.create([
-							EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
-						]);
-						view.dispatch({
-							selection: newSelection,
-							scrollIntoView: true,
-							annotations: Transaction.userEvent.of("emacs.moveToEnd"),
-						});
-					} else {
-						// For end-of-line, use assoc = -1 to render cursor at end of current visual line
-						// (not at start of next visual line)
-						const newSelection = EditorSelection.create([
-							EditorSelection.cursor(newRange.head, -1)
-						]);
-						view.dispatch({
-							selection: newSelection,
-							scrollIntoView: true,
-							annotations: Transaction.userEvent.of("emacs.moveToEnd"),
-						});
-					}
+					this.moveToLineBoundary(editor, view, true);
 				} else {
 					this.withSelectionUpdateDirect(editor,
 						(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
@@ -201,39 +168,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "move-beginning-of-line",
 			name: "Move cursor to beginning of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				const view = (this.app.workspace.activeLeaf?.view as any)?.editor?.cm as EditorView | undefined;
+			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
-					const selection = view.state.selection.main;
-					// Pass a cursor at the head position with current assoc to get accurate visual line boundary
-					const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
-					const newRange = view.moveToLineBoundary(headCursor, false);
-					
-					if (this.disableSelectionWhenPossible) {
-						this.disableSelection(editor);
-					}
-					
-					const currentSelectionStart = this.getCurrentSelectionStart(editor);
-					
-					if (currentSelectionStart) {
-						const anchorOffset = editor.posToOffset(currentSelectionStart);
-						const newSelection = EditorSelection.create([
-							EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
-						]);
-						view.dispatch({
-							selection: newSelection,
-							scrollIntoView: true
-						});
-				} else {
-					// Keep the assoc flag so CodeMirror knows which visual line the cursor is on
-					const newSelection = EditorSelection.create([
-						EditorSelection.cursor(newRange.head, newRange.assoc)
-					]);
-					view.dispatch({
-						selection: newSelection,
-						scrollIntoView: true
-					});
-				}
+					this.moveToLineBoundary(editor, view, false);
 				} else {
 					this.withSelectionUpdateDirect(editor,
 						(head) => ({ line: head.line, ch: 0 }),
@@ -517,14 +455,6 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				this.transformDWIM(editor, capitalizeOneWord, capitalizeWords);
 			}
 		});
-
-		this.addCommand({
-			id: "transpose-chars",
-			name: "Transpose chars",
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.transposeChars(editor);
-			},
-		});
 	}
 
 	onunload() {
@@ -540,6 +470,41 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	getCodeMirrorView(markdownView: MarkdownView): EditorView | undefined {
+		return (markdownView as MarkdownView & { editor?: { cm?: EditorView } }).editor?.cm;
+	}
+
+	moveToLineBoundary(editor: Editor, view: EditorView, forward: boolean) {
+		const eventName = forward ? "emacs.moveToEnd" : "emacs.moveToBeginning";
+		const selection = view.state.selection.main;
+		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
+		const newRange = view.moveToLineBoundary(headCursor, forward);
+
+		if (this.disableSelectionWhenPossible) {
+			this.disableSelection(editor);
+		}
+
+		const currentSelectionStart = this.getCurrentSelectionStart(editor);
+		let newSelection;
+
+		if (currentSelectionStart) {
+			const anchorOffset = editor.posToOffset(currentSelectionStart);
+			newSelection = EditorSelection.create([
+				EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
+			]);
+		} else {
+			newSelection = EditorSelection.create([
+				EditorSelection.cursor(newRange.head, newRange.assoc)
+			]);
+		}
+
+		view.dispatch({
+			selection: newSelection,
+			scrollIntoView: true,
+			annotations: Transaction.userEvent.of(eventName),
+		});
 	}
 
 	handleKeyRepeat(keyEvent: KeyboardEvent) {
