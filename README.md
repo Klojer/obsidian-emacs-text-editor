@@ -54,8 +54,10 @@ make uninstall
 | Ctrl + l                | Recenter                   | Scroll window to center current line |
 | Ctrl + Shift + -        | Redo                       | Redo |
 | Ctrl + Space            | Set mark command           | Mark the beginning of a selection |
+| (not configured)        | Mark whole buffer          | Select the entire buffer and set mark at the beginning |
 | Ctrl + /                | Undo                       | Undo |
 | Ctrl + y                | Yank                       | Paste (Yank) a cut or copied a region |
+| (not configured)        | Transpose chars            | Swap the two characters around the cursor |
 | (not configured)        | Upcase word                | Make entire next word uppercase, advance cursor |
 | (not configured)        | Downcase word              | Make entire next word lowercase, advance cursor |
 | (not configured)        | Capitalize word            | Capitalize next word or rest of current word, advance cursor |
