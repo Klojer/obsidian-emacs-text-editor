@@ -1,4 +1,6 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
+import { EditorView } from "@codemirror/view";
+import { EditorSelection, Transaction } from "@codemirror/state";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -150,10 +152,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "move-end-of-line",
 			name: "Move end of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'e' }],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdateDirect(editor,
-					(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
-				);
+			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				const view = this.getCodeMirrorView(markdownView);
+				if (view) {
+					this.moveToLineBoundary(editor, view, true);
+				} else {
+					this.withSelectionUpdateDirect(editor,
+						(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
+					);
+				}
 			},
 		});
 
@@ -161,10 +168,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "move-beginning-of-line",
 			name: "Move cursor to beginning of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.withSelectionUpdateDirect(editor,
-					(head) => ({ line: head.line, ch: 0 }),
-				);
+			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				const view = this.getCodeMirrorView(markdownView);
+				if (view) {
+					this.moveToLineBoundary(editor, view, false);
+				} else {
+					this.withSelectionUpdateDirect(editor,
+						(head) => ({ line: head.line, ch: 0 }),
+					);
+				}
 			},
 		});
 
@@ -458,6 +470,41 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	getCodeMirrorView(markdownView: MarkdownView): EditorView | undefined {
+		return (markdownView as MarkdownView & { editor?: { cm?: EditorView } }).editor?.cm;
+	}
+
+	moveToLineBoundary(editor: Editor, view: EditorView, forward: boolean) {
+		const eventName = forward ? "emacs.moveToEnd" : "emacs.moveToBeginning";
+		const selection = view.state.selection.main;
+		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
+		const newRange = view.moveToLineBoundary(headCursor, forward);
+
+		if (this.disableSelectionWhenPossible) {
+			this.disableSelection(editor);
+		}
+
+		const currentSelectionStart = this.getCurrentSelectionStart(editor);
+		let newSelection;
+
+		if (currentSelectionStart) {
+			const anchorOffset = editor.posToOffset(currentSelectionStart);
+			newSelection = EditorSelection.create([
+				EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
+			]);
+		} else {
+			newSelection = EditorSelection.create([
+				EditorSelection.cursor(newRange.head, newRange.assoc)
+			]);
+		}
+
+		view.dispatch({
+			selection: newSelection,
+			scrollIntoView: true,
+			annotations: Transaction.userEvent.of(eventName),
+		});
 	}
 
 	handleKeyRepeat(keyEvent: KeyboardEvent) {
@@ -870,6 +917,37 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		} else {
 			this.transformWordAtCursor(editor, transformOneWord);
 		}
+	}
+
+	transposeChars(editor: Editor) {
+		this.disableSelection(editor);
+
+		const cursor = editor.getCursor();
+		const line = editor.getLine(cursor.line);
+
+		if (line.length < 2 || cursor.ch === 0) {
+			return;
+		}
+
+		const swapRightIndex = cursor.ch < line.length ? cursor.ch : line.length - 1;
+		const swapLeftIndex = swapRightIndex - 1;
+
+		const transposedLine =
+			line.slice(0, swapLeftIndex) +
+			line[swapRightIndex] +
+			line[swapLeftIndex] +
+			line.slice(swapRightIndex + 1);
+
+		editor.replaceRange(
+			transposedLine,
+			{ line: cursor.line, ch: 0 },
+			{ line: cursor.line, ch: line.length },
+		);
+
+		editor.setCursor({
+			line: cursor.line,
+			ch: Math.min(swapRightIndex + 1, transposedLine.length),
+		});
 	}
 }
 
