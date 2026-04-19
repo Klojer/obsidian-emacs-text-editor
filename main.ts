@@ -313,6 +313,20 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "mark-whole-buffer",
+			name: "Mark whole buffer",
+			editorCallback: (editor: Editor, _: MarkdownView) => {
+				const lastLine = editor.lineCount() - 1;
+				const bufferStart = { line: 0, ch: 0 };
+				const bufferEnd = { line: lastLine, ch: editor.getLine(lastLine).length };
+
+				this.markPosition = bufferStart;
+				this.disableSelectionWhenPossible = false;
+				editor.setSelection(bufferStart, bufferEnd);
+			},
+		});
+
+		this.addCommand({
 			id: "keyboard-quit",
 			name: "Keyboard-quit",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'g' }],
@@ -454,6 +468,14 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				this.transformDWIM(editor, capitalizeOneWord, capitalizeWords);
 			}
+		});
+
+		this.addCommand({
+			id: "transpose-chars",
+			name: "Transpose chars",
+			editorCallback: (editor: Editor, _: MarkdownView) => {
+				this.transposeChars(editor);
+			},
 		});
 	}
 
