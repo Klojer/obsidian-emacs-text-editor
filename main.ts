@@ -597,24 +597,53 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		if (!activeView) return null;
 
 		const editor = activeView.editor;
+		const handlers = this.getRepeatableMoveHandlers(editor);
+		const keyId = this.getKeyId(e);
+		return handlers.get(keyId) ?? null;
+	}
 
-		if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-			switch (e.key.toLowerCase()) {
-				case 'f': return () => this.moveForwardOneChar(editor);
-				case 'b': return () => this.moveBackOneChar(editor);
-				case 'n': return () => this.moveNextLine(editor);
-				case 'p': return () => this.movePreviousLine(editor);
-				case 'd': return () => this.deleteOneChar(editor);
+	getRepeatableMoveHandlers(editor: Editor): Map<string, () => void> {
+		const handlerByCommand: Record<string, () => void> = {
+			'forward-char': () => this.moveForwardOneChar(editor),
+			'backward-char': () => this.moveBackOneChar(editor),
+			'next-line': () => this.moveNextLine(editor),
+			'previous-line': () => this.movePreviousLine(editor),
+			'delete-char': () => this.deleteOneChar(editor),
+			'forward-word': () => this.moveForwardOneWord(editor),
+			'backward-word': () => this.moveBackOneWord(editor),
+			'kill-word': () => this.killOneWord(editor),
+		};
+
+		const result = new Map<string, () => void>();
+		const prefix = `${this.manifest.id}:`;
+
+		for (const [commandId, handler] of Object.entries(handlerByCommand)) {
+			const hotkeys = (this.app as App & { hotkeyManager?: { getHotkeys(id: string): { modifiers: string[]; key: string }[] | null } })
+				.hotkeyManager?.getHotkeys(`${prefix}${commandId}`);
+			if (!hotkeys) continue;
+			for (const hotkey of hotkeys) {
+				const normalized = this.normalizeHotkey(hotkey);
+				if (normalized) {
+					result.set(normalized, handler);
+				}
 			}
 		}
-		if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
-			switch (e.key.toLowerCase()) {
-				case 'f': return () => this.moveForwardOneWord(editor);
-				case 'b': return () => this.moveBackOneWord(editor);
-				case 'd': return () => this.killOneWord(editor);
-			}
-		}
-		return null;
+
+		return result;
+	}
+
+	normalizeHotkey(hotkey: { modifiers: string[]; key: string }): string | null {
+		const key = hotkey.key?.toLowerCase();
+		if (!key) return null;
+
+		// Resolve platform-specific "Mod" modifier to Ctrl (non-mac) or Meta (mac).
+		const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+		const resolvedModifiers = hotkey.modifiers.map((m) => {
+			if (m === 'Mod') return isMac ? 'meta' : 'ctrl';
+			return m.toLowerCase();
+		});
+
+		return [...resolvedModifiers.sort(), key].join('+');
 	}
 
 	stopKeyRepeat(keyId: string) {
