@@ -1060,7 +1060,7 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Beginning of line like Obsidian HOME')
-			.setDesc('Make `move-beginning-of-line` (default Ctrl-A) toggle between column 0 and the first text character, matching Obsidian\'s HOME key. Skips indentation, bullet markers, heading markers, and blockquote markers.')
+			.setDesc('Make Ctrl-A (move-beginning-of-line) toggle between column 0 and the first text character, matching Obsidian\'s HOME key. Skips indentation, list markers, checkboxes, heading markers, and blockquote markers.')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.beginningOfLineLikeObsidian)
 				.onChange(async (value) => {
@@ -1134,7 +1134,7 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 }
 
 function getObsidianHomeColumn(lineText: string): number {
-	const match = lineText.match(/^(\s*(?:(?:[-*+]|\d+[.)]|#+|>+)\s+)*)/);
+	const match = lineText.match(/^(\s*(?:(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)|(?:#+|>+)\s+)*)/);
 	return match ? match[0].length : 0;
 }
 
