@@ -13,14 +13,14 @@ interface EmacsKeyRepeatSettings {
 	enableKeyRepeat: boolean;
 	keyRepeatDelay: number;
 	keyRepeatInterval: number;
-	beginningOfLineLikeObsidian: boolean;
+	lineBoundariesLikeObsidian: boolean;
 }
 
 const DEFAULT_SETTINGS: EmacsKeyRepeatSettings = {
 	enableKeyRepeat: true,
 	keyRepeatDelay: 500, // Initial delay before repeat starts (ms)
 	keyRepeatInterval: 50, // Interval between repeats (ms)
-	beginningOfLineLikeObsidian: false,
+	lineBoundariesLikeObsidian: false,
 };
 
 const DEFAULT_REPEATABLE_HOTKEYS: Record<string, { modifiers: string[]; key: string }[]> = {
@@ -168,13 +168,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'e' }],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
 				const view = this.getCodeMirrorView(markdownView);
-				if (view) {
-					this.moveToLineBoundary(editor, view, true);
-				} else {
-					this.withSelectionUpdateDirect(editor,
-						(head) => ({ line: head.line, ch: editor.getLine(head.line).length }),
-					);
+				if (!view) {
+					this.withSelectionUpdateDirect(editor, (head) => {
+						const lineText = editor.getLine(head.line);
+						return computeLogicalLineBoundaryPosition(head, lineText, true, this.settings.lineBoundariesLikeObsidian);
+					});
+					return;
 				}
+
+				this.moveToLineBoundaryUnified(editor, view, true, this.settings.lineBoundariesLikeObsidian);
 			},
 		});
 
@@ -185,25 +187,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
 				const view = this.getCodeMirrorView(markdownView);
 				if (!view) {
-					if (this.settings.beginningOfLineLikeObsidian) {
-						this.withSelectionUpdateDirect(editor, (head) => {
-							const lineText = editor.getLine(head.line);
-							const targetCh = getObsidianHomeColumn(lineText);
-							return { line: head.line, ch: head.ch === targetCh ? 0 : targetCh };
-						});
-					} else {
-						this.withSelectionUpdateDirect(editor,
-							(head) => ({ line: head.line, ch: 0 }),
-						);
-					}
+					this.withSelectionUpdateDirect(editor, (head) => {
+						const lineText = editor.getLine(head.line);
+						const targetPos = computeLogicalLineBoundaryPosition(head, lineText, false, this.settings.lineBoundariesLikeObsidian);
+						return { line: head.line, ch: head.ch === targetPos.ch ? 0 : targetPos.ch };
+					});
 					return;
 				}
 
-				if (this.settings.beginningOfLineLikeObsidian) {
-					this.moveToLineBoundaryLikeObsidian(editor, view);
-				} else {
-					this.moveToLineBoundary(editor, view, false);
-				}
+				this.moveToLineBoundaryUnified(editor, view, false, this.settings.lineBoundariesLikeObsidian);
 			},
 		});
 
@@ -525,28 +517,51 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		return (markdownView as MarkdownView & { editor?: { cm?: EditorView } }).editor?.cm;
 	}
 
-	moveToLineBoundary(editor: Editor, view: EditorView, forward: boolean) {
+	moveToLineBoundaryUnified(editor: Editor, view: EditorView, forward: boolean, likeObsidian: boolean) {
 		const eventName = forward ? "emacs.moveToEnd" : "emacs.moveToBeginning";
 		const selection = view.state.selection.main;
 		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
-		const newRange = view.moveToLineBoundary(headCursor, forward);
-		this.dispatchLineBoundaryMove(editor, view, newRange, eventName);
-	}
+		const visualBoundary = view.moveToLineBoundary(headCursor, forward);
 
-	moveToLineBoundaryLikeObsidian(editor: Editor, view: EditorView) {
-		const eventName = "emacs.moveToBeginning";
-		const selection = view.state.selection.main;
-		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
-		const visualStartRange = view.moveToLineBoundary(headCursor, false);
+		if (!likeObsidian) {
+			this.dispatchLineBoundaryMove(editor, view, visualBoundary, eventName);
+			return;
+		}
 
 		const headPos = editor.offsetToPos(selection.head);
 		const lineText = editor.getLine(headPos.line);
-		const homeCol = getObsidianHomeColumn(lineText);
-		const homeOffset = editor.posToOffset({ line: headPos.line, ch: homeCol });
 
-		const targetRange = selection.head === visualStartRange.head
-			? EditorSelection.cursor(homeOffset, -1)
-			: visualStartRange;
+		let targetRange: SelectionRange;
+		if (forward) {
+			const logicalEndOffset = editor.posToOffset({ line: headPos.line, ch: lineText.length });
+			targetRange = selection.head === visualBoundary.head
+				? EditorSelection.cursor(logicalEndOffset, 1)
+				: visualBoundary;
+		} else {
+			const columnZeroOffset = editor.posToOffset({ line: headPos.line, ch: 0 });
+			const homeCol = getObsidianHomeColumn(lineText);
+			const homeOffset = editor.posToOffset({ line: headPos.line, ch: homeCol });
+
+			if (hasStructuralMarkers(lineText) && visualBoundary.head !== columnZeroOffset) {
+				if (selection.head === visualBoundary.head) {
+					targetRange = EditorSelection.cursor(homeOffset, -1);
+				} else if (selection.head === homeOffset) {
+					targetRange = EditorSelection.cursor(columnZeroOffset, -1);
+				} else if (selection.head === columnZeroOffset) {
+					targetRange = EditorSelection.cursor(homeOffset, -1);
+				} else {
+					targetRange = visualBoundary;
+				}
+			} else if (hasStructuralMarkers(lineText) && visualBoundary.head === columnZeroOffset) {
+				targetRange = selection.head === homeOffset
+					? EditorSelection.cursor(columnZeroOffset, -1)
+					: EditorSelection.cursor(homeOffset, -1);
+			} else {
+				targetRange = selection.head === visualBoundary.head
+					? EditorSelection.cursor(columnZeroOffset, -1)
+					: visualBoundary;
+			}
+		}
 
 		this.dispatchLineBoundaryMove(editor, view, targetRange, eventName);
 	}
@@ -1084,12 +1099,12 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Beginning of line like Obsidian HOME')
-			.setDesc('Make Ctrl-A (move-beginning-of-line) toggle between column 0 and the first text character, matching Obsidian\'s HOME key. Skips indentation, list markers, checkboxes, heading markers, and blockquote markers.')
+			.setName('Move to line boundaries like Obsidian HOME/END')
+			.setDesc('Toggle the move-beginning-of-line and move-end-of-line commands between the visual line boundary and the logical line content boundary, matching Obsidian\'s HOME and END keys. The beginning-of-line command skips indentation, list markers, checkboxes, heading markers, and blockquote markers.')
 			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.beginningOfLineLikeObsidian)
+				.setValue(this.plugin.settings.lineBoundariesLikeObsidian)
 				.onChange(async (value) => {
-					this.plugin.settings.beginningOfLineLikeObsidian = value;
+					this.plugin.settings.lineBoundariesLikeObsidian = value;
 					await this.plugin.saveSettings();
 				})
 			);
@@ -1161,6 +1176,23 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 function getObsidianHomeColumn(lineText: string): number {
 	const match = lineText.match(/^(\s*(?:(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?)|(?:#+|>+)\s+)*)/);
 	return match ? match[0].length : 0;
+}
+
+function hasStructuralMarkers(lineText: string): boolean {
+	return /^\s*(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?|(?:#+|>+)\s+)/.test(lineText);
+}
+
+function computeLogicalLineBoundaryPosition(head: EditorPosition, lineText: string, forward: boolean, likeObsidian: boolean): EditorPosition {
+	if (forward) {
+		return { line: head.line, ch: lineText.length };
+	}
+
+	const homeCol = getObsidianHomeColumn(lineText);
+	if (likeObsidian && hasStructuralMarkers(lineText) && head.ch !== homeCol) {
+		return { line: head.line, ch: homeCol };
+	}
+
+	return { line: head.line, ch: 0 };
 }
 
 function isEventInterruptSelection(e: KeyboardEvent): boolean {
