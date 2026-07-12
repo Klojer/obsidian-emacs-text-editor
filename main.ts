@@ -1,6 +1,6 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
 import { EditorView } from "@codemirror/view";
-import { EditorSelection, Transaction } from "@codemirror/state";
+import { EditorSelection, SelectionRange, Transaction } from "@codemirror/state";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -183,22 +183,26 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Move cursor to beginning of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
-				if (this.settings.beginningOfLineLikeObsidian) {
-					this.withSelectionUpdateDirect(editor, (head) => {
-						const lineText = editor.getLine(head.line);
-						const homeCol = getObsidianHomeColumn(lineText);
-						const targetCh = head.ch === homeCol ? 0 : homeCol;
-						return { line: head.line, ch: targetCh };
-					});
+				const view = this.getCodeMirrorView(markdownView);
+				if (!view) {
+					if (this.settings.beginningOfLineLikeObsidian) {
+						this.withSelectionUpdateDirect(editor, (head) => {
+							const lineText = editor.getLine(head.line);
+							const targetCh = getObsidianHomeColumn(lineText);
+							return { line: head.line, ch: head.ch === targetCh ? 0 : targetCh };
+						});
+					} else {
+						this.withSelectionUpdateDirect(editor,
+							(head) => ({ line: head.line, ch: 0 }),
+						);
+					}
 					return;
 				}
-				const view = this.getCodeMirrorView(markdownView);
-				if (view) {
-					this.moveToLineBoundary(editor, view, false);
+
+				if (this.settings.beginningOfLineLikeObsidian) {
+					this.moveToLineBoundaryLikeObsidian(editor, view);
 				} else {
-					this.withSelectionUpdateDirect(editor,
-						(head) => ({ line: head.line, ch: 0 }),
-					);
+					this.moveToLineBoundary(editor, view, false);
 				}
 			},
 		});
@@ -526,7 +530,28 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		const selection = view.state.selection.main;
 		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
 		const newRange = view.moveToLineBoundary(headCursor, forward);
+		this.dispatchLineBoundaryMove(editor, view, newRange, eventName);
+	}
 
+	moveToLineBoundaryLikeObsidian(editor: Editor, view: EditorView) {
+		const eventName = "emacs.moveToBeginning";
+		const selection = view.state.selection.main;
+		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
+		const visualStartRange = view.moveToLineBoundary(headCursor, false);
+
+		const headPos = editor.offsetToPos(selection.head);
+		const lineText = editor.getLine(headPos.line);
+		const homeCol = getObsidianHomeColumn(lineText);
+		const homeOffset = editor.posToOffset({ line: headPos.line, ch: homeCol });
+
+		const targetRange = selection.head === visualStartRange.head
+			? EditorSelection.cursor(homeOffset, -1)
+			: visualStartRange;
+
+		this.dispatchLineBoundaryMove(editor, view, targetRange, eventName);
+	}
+
+	dispatchLineBoundaryMove(editor: Editor, view: EditorView, newRange: SelectionRange, eventName: string) {
 		if (this.disableSelectionWhenPossible) {
 			this.disableSelection(editor);
 		}
