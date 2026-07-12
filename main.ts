@@ -542,17 +542,17 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			const homeCol = getObsidianHomeColumn(lineText);
 			const homeOffset = editor.posToOffset({ line: headPos.line, ch: homeCol });
 
-			if (hasStructuralMarkers(lineText) && visualBoundary.head !== columnZeroOffset) {
-				if (selection.head === visualBoundary.head) {
-					targetRange = EditorSelection.cursor(homeOffset, -1);
-				} else if (selection.head === homeOffset) {
-					targetRange = EditorSelection.cursor(columnZeroOffset, -1);
-				} else if (selection.head === columnZeroOffset) {
-					targetRange = EditorSelection.cursor(homeOffset, -1);
-				} else {
-					targetRange = visualBoundary;
-				}
-			} else if (hasStructuralMarkers(lineText) && visualBoundary.head === columnZeroOffset) {
+		if (hasStructuralMarkers(lineText) && visualBoundary.head > homeOffset) {
+			if (selection.head === visualBoundary.head) {
+				targetRange = EditorSelection.cursor(homeOffset, -1);
+			} else if (selection.head === homeOffset) {
+				targetRange = EditorSelection.cursor(columnZeroOffset, -1);
+			} else if (selection.head === columnZeroOffset) {
+				targetRange = EditorSelection.cursor(homeOffset, -1);
+			} else {
+				targetRange = visualBoundary;
+			}
+		} else if (hasStructuralMarkers(lineText)) {
 				targetRange = selection.head === homeOffset
 					? EditorSelection.cursor(columnZeroOffset, -1)
 					: EditorSelection.cursor(homeOffset, -1);
