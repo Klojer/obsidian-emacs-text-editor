@@ -13,12 +13,14 @@ interface EmacsKeyRepeatSettings {
 	enableKeyRepeat: boolean;
 	keyRepeatDelay: number;
 	keyRepeatInterval: number;
+	beginningOfLineLikeObsidian: boolean;
 }
 
 const DEFAULT_SETTINGS: EmacsKeyRepeatSettings = {
 	enableKeyRepeat: true,
 	keyRepeatDelay: 500, // Initial delay before repeat starts (ms)
 	keyRepeatInterval: 50, // Interval between repeats (ms)
+	beginningOfLineLikeObsidian: false,
 };
 
 const DEFAULT_REPEATABLE_HOTKEYS: Record<string, { modifiers: string[]; key: string }[]> = {
@@ -181,6 +183,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			name: "Move cursor to beginning of line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				if (this.settings.beginningOfLineLikeObsidian) {
+					this.withSelectionUpdateDirect(editor, (head) => {
+						const lineText = editor.getLine(head.line);
+						const homeCol = getObsidianHomeColumn(lineText);
+						const targetCh = head.ch === homeCol ? 0 : homeCol;
+						return { line: head.line, ch: targetCh };
+					});
+					return;
+				}
 				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
 					this.moveToLineBoundary(editor, view, false);
@@ -1048,6 +1059,17 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Beginning of line like Obsidian HOME')
+			.setDesc('Make `move-beginning-of-line` (default Ctrl-A) toggle between column 0 and the first text character, matching Obsidian\'s HOME key. Skips indentation, bullet markers, heading markers, and blockquote markers.')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.beginningOfLineLikeObsidian)
+				.onChange(async (value) => {
+					this.plugin.settings.beginningOfLineLikeObsidian = value;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
 			.setName('Initial delay')
 			.setDesc(`Time before key repeat starts (25-1000ms). Current: ${this.plugin.settings.keyRepeatDelay}ms`)
 			.addSlider(slider => slider
@@ -1109,6 +1131,11 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 				this.display();
 			});
 	}
+}
+
+function getObsidianHomeColumn(lineText: string): number {
+	const match = lineText.match(/^(\s*(?:(?:[-*+]|\d+[.)]|#+|>+)\s+)*)/);
+	return match ? match[0].length : 0;
 }
 
 function isEventInterruptSelection(e: KeyboardEvent): boolean {
