@@ -21,6 +21,17 @@ const DEFAULT_SETTINGS: EmacsKeyRepeatSettings = {
 	keyRepeatInterval: 50, // Interval between repeats (ms)
 };
 
+const DEFAULT_REPEATABLE_HOTKEYS: Record<string, { modifiers: string[]; key: string }[]> = {
+	'forward-char': [{ modifiers: ['ctrl'], key: 'f' }],
+	'backward-char': [{ modifiers: ['ctrl'], key: 'b' }],
+	'next-line': [{ modifiers: ['ctrl'], key: 'n' }],
+	'previous-line': [{ modifiers: ['ctrl'], key: 'p' }],
+	'delete-char': [{ modifiers: ['ctrl'], key: 'd' }],
+	'forward-word': [{ modifiers: ['alt'], key: 'f' }],
+	'backward-word': [{ modifiers: ['alt'], key: 'b' }],
+	'kill-word': [{ modifiers: ['alt'], key: 'd' }],
+};
+
 enum Direction {
 	Forward,
 	Backward,
@@ -51,6 +62,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	disableSelectionWhenPossible = false;
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
+	private repeatableMoveHandlers: Map<string, (editor: Editor) => void> | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -596,25 +608,62 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 		if (!activeView) return null;
 
-		const editor = activeView.editor;
+		this.buildRepeatableMoveHandlers();
+		const keyId = this.getKeyId(e);
+		const handler = this.repeatableMoveHandlers?.get(keyId);
+		if (!handler) return null;
 
-		if (e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-			switch (e.key.toLowerCase()) {
-				case 'f': return () => this.moveForwardOneChar(editor);
-				case 'b': return () => this.moveBackOneChar(editor);
-				case 'n': return () => this.moveNextLine(editor);
-				case 'p': return () => this.movePreviousLine(editor);
-				case 'd': return () => this.deleteOneChar(editor);
+		const editor = activeView.editor;
+		return () => handler(editor);
+	}
+
+	buildRepeatableMoveHandlers() {
+		if (this.repeatableMoveHandlers) {
+			return;
+		}
+
+		const handlerByCommand: Record<string, (editor: Editor) => void> = {
+			'forward-char': (ed) => this.moveForwardOneChar(ed),
+			'backward-char': (ed) => this.moveBackOneChar(ed),
+			'next-line': (ed) => this.moveNextLine(ed),
+			'previous-line': (ed) => this.movePreviousLine(ed),
+			'delete-char': (ed) => this.deleteOneChar(ed),
+			'forward-word': (ed) => this.moveForwardOneWord(ed),
+			'backward-word': (ed) => this.moveBackOneWord(ed),
+			'kill-word': (ed) => this.killOneWord(ed),
+		};
+
+		const result = new Map<string, (editor: Editor) => void>();
+		const prefix = `${this.manifest.id}:`;
+		const hotkeyManager = (this.app as App & { hotkeyManager?: { getHotkeys(id: string): { modifiers: string[]; key: string }[] | null } }).hotkeyManager;
+
+		for (const [commandId, handler] of Object.entries(handlerByCommand)) {
+			const hotkeys = hotkeyManager?.getHotkeys(`${prefix}${commandId}`);
+			const effectiveHotkeys = hotkeys ?? DEFAULT_REPEATABLE_HOTKEYS[commandId];
+			if (!effectiveHotkeys) continue;
+			for (const hotkey of effectiveHotkeys) {
+				const normalized = this.normalizeHotkey(hotkey);
+				if (normalized) {
+					result.set(normalized, handler);
+				}
 			}
 		}
-		if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
-			switch (e.key.toLowerCase()) {
-				case 'f': return () => this.moveForwardOneWord(editor);
-				case 'b': return () => this.moveBackOneWord(editor);
-				case 'd': return () => this.killOneWord(editor);
-			}
-		}
-		return null;
+
+		this.repeatableMoveHandlers = result;
+	}
+
+	normalizeHotkey(hotkey: { modifiers: string[]; key: string }): string | null {
+		const key = hotkey.key?.toLowerCase();
+		if (!key) return null;
+
+		// Resolve platform-specific "Mod" modifier to Ctrl (non-mac) or Meta (mac).
+		const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+		const resolvedModifiers = hotkey.modifiers.map((m) => {
+			if (m === 'Mod') return isMac ? 'meta' : 'ctrl';
+			return m.toLowerCase();
+		});
+
+		return [...resolvedModifiers.sort(), key].join('+');
 	}
 
 	stopKeyRepeat(keyId: string) {
