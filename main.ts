@@ -189,8 +189,11 @@ export default class EmacsTextEditorPlugin extends Plugin {
 				if (!view) {
 					this.withSelectionUpdateDirect(editor, (head) => {
 						const lineText = editor.getLine(head.line);
-						const targetPos = computeLogicalLineBoundaryPosition(head, lineText, false, this.settings.lineBoundariesLikeObsidian);
-						return { line: head.line, ch: head.ch === targetPos.ch ? 0 : targetPos.ch };
+						const homeCol = getObsidianHomeColumn(lineText);
+						if (this.settings.lineBoundariesLikeObsidian && hasStructuralMarkers(lineText) && head.ch !== 0 && head.ch !== homeCol) {
+							return { line: head.line, ch: homeCol };
+						}
+						return { line: head.line, ch: 0 };
 					});
 					return;
 				}
@@ -542,22 +545,20 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			const homeCol = getObsidianHomeColumn(lineText);
 			const homeOffset = editor.posToOffset({ line: headPos.line, ch: homeCol });
 
-		if (hasStructuralMarkers(lineText) && visualBoundary.head > homeOffset) {
-			if (selection.head === visualBoundary.head) {
-				targetRange = EditorSelection.cursor(homeOffset, -1);
-			} else if (selection.head === homeOffset) {
-				targetRange = EditorSelection.cursor(columnZeroOffset, -1);
-			} else if (selection.head === columnZeroOffset) {
-				targetRange = EditorSelection.cursor(homeOffset, -1);
-			} else {
-				targetRange = visualBoundary;
-			}
-		} else if (hasStructuralMarkers(lineText)) {
-				targetRange = selection.head === homeOffset
+			if (hasStructuralMarkers(lineText) && visualBoundary.head > homeOffset) {
+				if (selection.head === columnZeroOffset || selection.head === homeOffset) {
+					targetRange = EditorSelection.cursor(columnZeroOffset, -1);
+				} else if (selection.head === visualBoundary.head) {
+					targetRange = EditorSelection.cursor(homeOffset, -1);
+				} else {
+					targetRange = visualBoundary;
+				}
+			} else if (hasStructuralMarkers(lineText)) {
+				targetRange = (selection.head === columnZeroOffset || selection.head === homeOffset)
 					? EditorSelection.cursor(columnZeroOffset, -1)
 					: EditorSelection.cursor(homeOffset, -1);
 			} else {
-				targetRange = selection.head === visualBoundary.head
+				targetRange = (selection.head === columnZeroOffset || selection.head === visualBoundary.head)
 					? EditorSelection.cursor(columnZeroOffset, -1)
 					: visualBoundary;
 			}
