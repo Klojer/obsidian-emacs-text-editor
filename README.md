@@ -80,6 +80,10 @@ When enabled in Settings → Community plugins → Emacs text editor, the follow
 
 In the Settings, you can also adjust the initial repeat delay or interval, or use quick presets (Slow/Medium/Fast).  This repeat mechanism works around Obsidian API limitations which prevent changing ctrl or alt key repeats.  It is separate from your OS keyboard repeat controls; changing repeat timing here affects only Obsidian hotkey behavior.
 
+## Line Boundaries
+
+In **Settings → Community plugins → Emacs text editor**, you can enable **Move to line boundaries like Obsidian HOME/END**. When enabled, `Ctrl + a` (move beginning of line) and `Ctrl + e` (move end of line) match Obsidian's HOME and END key behavior, toggling between visual line boundaries and logical content boundaries (skipping indentation, list markers, checkboxes, headings, and blockquotes).
+
 ## Known issues
 
 1. Move to beginning of line command (Ctrl + a) conflicts with select all action. Solution: Use Home/End + Shift.
