@@ -82,7 +82,7 @@ In the Settings, you can also adjust the initial repeat delay or interval, or us
 
 ## Line Boundaries
 
-In **Settings → Community plugins → Emacs text editor**, you can enable **Move to line boundaries like Obsidian HOME/END**. When enabled, `Ctrl + a` (move beginning of line) and `Ctrl + e` (move end of line) match Obsidian's HOME and END key behavior, toggling between visual line boundaries and logical content boundaries (skipping indentation, list markers, checkboxes, headings, and blockquotes).
+In **Settings → Community plugins → Emacs text editor**, you can enable **Move to line boundaries like Obsidian HOME/END**. When enabled, the commands `move beginning of line` (default `Ctrl + a`) and `move end of line` (default `Ctrl + e`) match Obsidian's HOME and END key behavior, toggling between visual line boundaries and logical content boundaries (skipping indentation, list markers, checkboxes, headings, and blockquotes).
 
 ## Known issues
 
