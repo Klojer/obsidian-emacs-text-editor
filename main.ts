@@ -62,7 +62,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	disableSelectionWhenPossible = false;
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
-	private repeatableMoveHandlers: Map<string, (editor: Editor) => void> | null = null;
+	private repeatableMoveHandlers: Map<string, (editor: Editor, view?: EditorView) => void> | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -128,8 +128,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "next-line",
 			name: "Next line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'n' }],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.moveNextLine(editor);
+			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				this.moveNextLine(editor, this.getCodeMirrorView(markdownView));
 			},
 		});
 
@@ -137,8 +137,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "previous-line",
 			name: "Previous line",
 			hotkeys: [{ modifiers: ['Ctrl'], key: 'p' }],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
-				this.movePreviousLine(editor);
+			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+				this.movePreviousLine(editor, this.getCodeMirrorView(markdownView));
 			},
 		});
 
@@ -541,6 +541,52 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 	}
 
+	moveVerticallyDirect(editor: Editor, view: EditorView, forward: boolean) {
+		// Move one visual line using CM6's real vertical-motion helper
+		// (view.moveVertically — pixel-based, soft-wrap-aware, the same
+		// logic editor.exec("goDown"/"goUp") uses internally) and dispatch
+		// the resulting selection in a SINGLE transaction.
+		//
+		// The previous implementation collapsed the selection, ran
+		// editor.exec("goDown"), then re-expanded to the mark — three
+		// separate transactions. In Obsidian Live Preview that intermediate
+		// collapse triggers block re-rendering (e.g. heading '#' reveal/hide
+		// and link decoration rebuild), which makes the region highlight
+		// visually disappear while the head sits on the line after a heading
+		// and reappear once it moves further. Computing the target position
+		// first and dispatching once avoids the intermediate collapse
+		// entirely. This mirrors the fix already applied to
+		// moveToLineBoundary / forward-char / backward-char / word moves.
+		const eventName = forward ? "emacs.moveDown" : "emacs.moveUp";
+		const selection = view.state.selection.main;
+		const headCursor = EditorSelection.cursor(selection.head, selection.assoc);
+		const newRange = view.moveVertically(headCursor, forward);
+
+		if (this.disableSelectionWhenPossible) {
+			this.disableSelection(editor);
+		}
+
+		const currentSelectionStart = this.getCurrentSelectionStart(editor);
+		let newSelection;
+
+		if (currentSelectionStart) {
+			const anchorOffset = editor.posToOffset(currentSelectionStart);
+			newSelection = EditorSelection.create([
+				EditorSelection.range(anchorOffset, newRange.head, newRange.assoc)
+			]);
+		} else {
+			newSelection = EditorSelection.create([
+				EditorSelection.cursor(newRange.head, newRange.assoc)
+			]);
+		}
+
+		view.dispatch({
+			selection: newSelection,
+			scrollIntoView: true,
+			annotations: Transaction.userEvent.of(eventName),
+		});
+	}
+
 	handleKeyRepeat(keyEvent: KeyboardEvent) {
 		if (!this.isInActiveEditor()) {
 			return;
@@ -614,7 +660,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		if (!handler) return null;
 
 		const editor = activeView.editor;
-		return () => handler(editor);
+		const view = this.getCodeMirrorView(activeView);
+		return () => handler(editor, view);
 	}
 
 	buildRepeatableMoveHandlers() {
@@ -622,18 +669,18 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			return;
 		}
 
-		const handlerByCommand: Record<string, (editor: Editor) => void> = {
+		const handlerByCommand: Record<string, (editor: Editor, view?: EditorView) => void> = {
 			'forward-char': (ed) => this.moveForwardOneChar(ed),
 			'backward-char': (ed) => this.moveBackOneChar(ed),
-			'next-line': (ed) => this.moveNextLine(ed),
-			'previous-line': (ed) => this.movePreviousLine(ed),
+			'next-line': (ed, view) => this.moveNextLine(ed, view),
+			'previous-line': (ed, view) => this.movePreviousLine(ed, view),
 			'delete-char': (ed) => this.deleteOneChar(ed),
 			'forward-word': (ed) => this.moveForwardOneWord(ed),
 			'backward-word': (ed) => this.moveBackOneWord(ed),
 			'kill-word': (ed) => this.killOneWord(ed),
 		};
 
-		const result = new Map<string, (editor: Editor) => void>();
+		const result = new Map<string, (editor: Editor, view?: EditorView) => void>();
 		const prefix = `${this.manifest.id}:`;
 		const hotkeyManager = (this.app as App & { hotkeyManager?: { getHotkeys(id: string): { modifiers: string[]; key: string }[] | null } }).hotkeyManager;
 
@@ -714,16 +761,27 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		});
 	}
 
-	moveNextLine(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goDown"); // visual screen lines down, not string
-		});
+	moveNextLine(editor: Editor, view?: EditorView) {
+		if (view) {
+			this.moveVerticallyDirect(editor, view, true);
+		} else {
+			// Fallback for editors without a CM6 view: collapse → move →
+			// re-expand. Visual disruption may still occur in Live Preview.
+			this.withSelectionUpdate(editor, () => {
+				editor.exec("goDown"); // visual screen lines down, not string
+			});
+		}
 	}
 
-	movePreviousLine(editor: Editor) {
-		this.withSelectionUpdate(editor, () => {
-			editor.exec("goUp");  // visual screen lines up, not string
-		});
+	movePreviousLine(editor: Editor, view?: EditorView) {
+		if (view) {
+			this.moveVerticallyDirect(editor, view, false);
+		} else {
+			// Fallback for editors without a CM6 view.
+			this.withSelectionUpdate(editor, () => {
+				editor.exec("goUp");  // visual screen lines up, not string
+			});
+		}
 	}
 
 	moveForwardOneWord(editor: Editor) {
