@@ -1,7 +1,7 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App, Hotkey } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection, Transaction } from "@codemirror/state";
-import { normalizeHotkey } from "./keys";
+import { canonicalKeyFromEvent, eventKeyId, normalizeHotkey } from "./keys";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -665,12 +665,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	getKeyId(e: KeyboardEvent): string {
-		const modifiers = [];
-		if (e.ctrlKey) modifiers.push('ctrl');
-		if (e.altKey) modifiers.push('alt');
-		if (e.shiftKey) modifiers.push('shift');
-		if (e.metaKey) modifiers.push('meta');
-		return [...modifiers, e.key.toLowerCase()].join('+');
+		// Match by physical key so chords the OS composed into other
+		// characters (macOS Option+F -> "ƒ") still hit the repeat table;
+		// modifiers are sorted to stay comparable with normalizeHotkey().
+		return eventKeyId(e, canonicalKeyFromEvent(e));
 	}
 
 	getKeyMoveFunc(e: KeyboardEvent): (() => void) | null {
