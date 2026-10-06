@@ -1,7 +1,13 @@
 import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App, Hotkey } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection, Transaction } from "@codemirror/state";
-import { canonicalKeyFromEvent, eventKeyId, normalizeHotkey } from "./keys";
+import {
+	IS_MAC,
+	canonicalKeyFromEvent,
+	eventKeyId,
+	literalKeyFromEvent,
+	normalizeHotkey,
+} from "./keys";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -10,16 +16,20 @@ const KEY_CODE_DIGIT_REGEX = /^Digit[0-9]$/u;
 const KEY_CODE_NUMPAD_REGEX = /^Numpad[0-9]$/u;
 const WORD_BOUNDARY_REGEX = /\b/gu;
 
+type MacKeyRescueMode = "auto" | "on" | "off";
+
 interface EmacsKeyRepeatSettings {
 	enableKeyRepeat: boolean;
 	keyRepeatDelay: number;
 	keyRepeatInterval: number;
+	macKeyRescueMode: MacKeyRescueMode;
 }
 
 const DEFAULT_SETTINGS: EmacsKeyRepeatSettings = {
 	enableKeyRepeat: true,
 	keyRepeatDelay: 500, // Initial delay before repeat starts (ms)
 	keyRepeatInterval: 50, // Interval between repeats (ms)
+	macKeyRescueMode: "auto",
 };
 
 // Single source of truth for this plugin's default bindings: addCommand()
@@ -86,6 +96,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
 	private repeatableMoveHandlers: Map<string, (editor: Editor, view?: EditorView) => void> | null = null;
+	private composedRescueCommands: Map<string, string> | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -106,6 +117,16 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			}
 		});
 
+		// macOS: Option (Alt) chords arrive composed into glyphs (Alt+F ->
+		// "ƒ"), so Obsidian's hotkey matcher never fires the plugin's Alt
+		// bindings and the glyph gets inserted instead. Rescue those events
+		// by matching the physical key. Registered after the key-repeat
+		// handler so repeatable chords are handled (and cancelled) there
+		// first.
+		this.registerDomEvent(document, "keydown", (e) => {
+			this.handleComposedKeyRescue(e);
+		});
+
 		// Things that stop repeat
 
 		// stop holding a key down
@@ -121,6 +142,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		// defocus current editor
 		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
 			this.stopAllKeyRepeats();
+			// Pick up hotkey changes made in Obsidian's settings since the
+			// rescue map was built.
+			this.composedRescueCommands = null;
 		}));
 
 		// Mouse click cancels mark mode (same as keyboard-quit)
@@ -523,6 +547,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		this.settings.keyRepeatDelay = Math.max(25, Math.min(2000, this.settings.keyRepeatDelay));
 		this.settings.keyRepeatInterval = Math.max(10, Math.min(1000, this.settings.keyRepeatInterval));
+		if (this.settings.macKeyRescueMode !== "on" && this.settings.macKeyRescueMode !== "off") {
+			this.settings.macKeyRescueMode = "auto";
+		}
 	}
 
 	async saveSettings() {
@@ -721,6 +748,74 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	effectiveHotkeys(commandId: string): Hotkey[] {
 		const hotkeyManager = (this.app as App & { hotkeyManager?: { getHotkeys(id: string): Hotkey[] | null } }).hotkeyManager;
 		return hotkeyManager?.getHotkeys(`${this.manifest.id}:${commandId}`) ?? DEFAULT_COMMAND_HOTKEYS[commandId] ?? [];
+	}
+
+	// app.commands is not part of the public typings either.
+	private get appCommands(): { commands?: Record<string, unknown>; executeCommandById(id: string): boolean } | undefined {
+		return (this.app as App & { commands?: { commands?: Record<string, unknown>; executeCommandById(id: string): boolean } }).commands;
+	}
+
+	isMacKeyRescueEnabled(): boolean {
+		const mode = this.settings.macKeyRescueMode;
+		return mode === "on" || (mode !== "off" && IS_MAC);
+	}
+
+	handleComposedKeyRescue(e: KeyboardEvent) {
+		if (!this.isMacKeyRescueEnabled() || e.defaultPrevented) {
+			return;
+		}
+
+		const canonicalId = eventKeyId(e, canonicalKeyFromEvent(e));
+		const literalId = eventKeyId(e, literalKeyFromEvent(e));
+		// Only rescue chords the OS composed into something else. If the
+		// delivered key already matches a binding (or equals the physical
+		// key), Obsidian's own hotkey dispatch handles it; intercepting
+		// here would run the command twice.
+		if (canonicalId === literalId || this.rescueCommands().has(literalId)) {
+			return;
+		}
+
+		const commandId = this.rescueCommands().get(canonicalId);
+		if (!commandId || !this.isInActiveEditor()) {
+			return;
+		}
+
+		// The keystroke must actually go to the note editor, not to a modal
+		// or some other pane's input.
+		if (!(e.target instanceof Element) || !e.target.closest(".cm-editor")) {
+			return;
+		}
+
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		this.appCommands?.executeCommandById(`${this.manifest.id}:${commandId}`);
+	}
+
+	// Canonical key id -> plugin command id, built from the user's effective
+	// hotkeys. Rebuilt on active-leaf-change so hotkey edits are picked up.
+	rescueCommands(): Map<string, string> {
+		if (this.composedRescueCommands) {
+			return this.composedRescueCommands;
+		}
+
+		const result = new Map<string, string>();
+		const prefix = `${this.manifest.id}:`;
+		const registered = this.appCommands?.commands;
+		const commandIds = registered
+			? Object.keys(registered).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length))
+			: Object.keys(DEFAULT_COMMAND_HOTKEYS);
+
+		for (const commandId of commandIds) {
+			for (const hotkey of this.effectiveHotkeys(commandId)) {
+				const normalized = normalizeHotkey(hotkey);
+				if (normalized) {
+					result.set(normalized, commandId);
+				}
+			}
+		}
+
+		this.composedRescueCommands = result;
+		return result;
 	}
 
 	stopKeyRepeat(keyId: string) {
@@ -1146,6 +1241,22 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 					slider.sliderEl.parentElement?.parentElement
 						?.querySelector('.setting-item-description')
 						?.setText(`Time between repeats (10-1000ms). Current: ${value}ms`);
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('macOS key rescue')
+			.setDesc('macOS composes Option+letter into special characters (Alt+F types "ƒ"), so Emacs meta chords like Alt+F/B/D/W and Ctrl+Space never fire and the character gets inserted instead. When enabled, composed keystrokes are matched by physical key position and the matching command is run. Auto: enable on macOS only.')
+			.addDropdown(dropdown => dropdown
+				.addOptions({
+					auto: 'Auto (macOS only)',
+					on: 'Always on',
+					off: 'Disabled',
+				})
+				.setValue(this.plugin.settings.macKeyRescueMode)
+				.onChange(async (value) => {
+					this.plugin.settings.macKeyRescueMode = value as MacKeyRescueMode;
+					await this.plugin.saveSettings();
 				})
 			);
 
