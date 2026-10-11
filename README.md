@@ -80,6 +80,24 @@ When enabled in Settings → Community plugins → Emacs text editor, the follow
 
 In the Settings, you can also adjust the initial repeat delay or interval, or use quick presets (Slow/Medium/Fast).  This repeat mechanism works around Obsidian API limitations which prevent changing ctrl or alt key repeats.  It is separate from your OS keyboard repeat controls; changing repeat timing here affects only Obsidian hotkey behavior.
 
+## macOS support
+
+On macOS the Option (Alt) key composes special characters — Alt+F types `ƒ`, Alt+D types `∂` — *before* Obsidian sees the keystroke. As a result the Emacs meta chords that work on Windows/Linux never fire on a Mac: nothing matches the hotkey and the special character gets inserted into the note instead. This fork fixes that in two places:
+
+1. **Physical-key matching for key repeat.** Held-down movement chords (including Alt+F, Alt+B, Alt+D) are now matched by physical key position (`KeyboardEvent.code`) instead of the composed character, so they repeat correctly on macOS and on any keyboard layout.
+2. **Key rescue dispatcher.** When a keystroke arrives composed (its delivered key differs from its physical position, e.g. `ƒ` vs `f`) and it matches one of this plugin's bindings — including bindings you reconfigured in Obsidian's Hotkeys settings — the plugin runs the matching command itself and swallows the event, so the special character is not inserted. This makes `Alt+F/B/D/W`, `Alt+U/L/C`, `Alt+Shift+[ ] , .`, `Alt+Backspace`, and `Ctrl+Space` work on macOS. Chords that Obsidian already handles natively (e.g. `Ctrl+F`, `Alt+Backspace`) are left untouched, and pressing `Cmd` as Meta for custom rebinds needs no rescue at all.
+
+Configure it under Settings → Community plugins → Emacs text editor → **macOS key rescue**:
+
+- **Auto (default):** active on macOS only — Windows/Linux behavior is completely unchanged.
+- **Always on:** useful on other platforms with layouts where AltGr composes characters (e.g. some European layouts).
+- **Disabled:** previous upstream behavior.
+
+Notes:
+
+- Keys are matched by *physical position*, so on non-US layouts a chord refers to the key at the same position as on a US layout — which is usually where your muscle memory expects it.
+- If `Ctrl+Space` (set mark) still does nothing, macOS itself is intercepting it as the "Select the previous input source" system shortcut. Disable that shortcut in System Settings → Keyboard → Keyboard Shortcuts → Input Sources, or rebind *Set mark command* in Obsidian's Hotkeys settings.
+
 ## Known issues
 
 1. Move to beginning of line command (Ctrl + a) conflicts with select all action. Solution: Use Home/End + Shift.

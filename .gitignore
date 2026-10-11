@@ -33,3 +33,6 @@ data.json
 
 # Direnv file
 .envrc
+
+# Test build artifacts
+.test-build

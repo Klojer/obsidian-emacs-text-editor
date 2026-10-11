@@ -1,11 +1,12 @@
 {
 	"name": "emacs-text-editor",
-	"version": "0.10.2",
+	"version": "0.11.0",
 	"description": "Partial emulation of Emacs text editor for Obisidian",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "esbuild tests/keys.test.ts --bundle --platform=node --format=cjs --outfile=.test-build/keys.test.cjs && node .test-build/keys.test.cjs",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},
 	"keywords": [],

@@ -1,6 +1,13 @@
-import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App } from "obsidian";
+import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App, Hotkey } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection, Transaction } from "@codemirror/state";
+import {
+	IS_MAC,
+	canonicalKeyFromEvent,
+	eventKeyId,
+	literalKeyFromEvent,
+	normalizeHotkey,
+} from "./keys";
 
 // Regex constants for consistent pattern matching
 const WORD_CHAR_REGEX = /[\p{L}\p{N}_]/u;
@@ -9,27 +16,53 @@ const KEY_CODE_DIGIT_REGEX = /^Digit[0-9]$/u;
 const KEY_CODE_NUMPAD_REGEX = /^Numpad[0-9]$/u;
 const WORD_BOUNDARY_REGEX = /\b/gu;
 
+type MacKeyRescueMode = "auto" | "on" | "off";
+
 interface EmacsKeyRepeatSettings {
 	enableKeyRepeat: boolean;
 	keyRepeatDelay: number;
 	keyRepeatInterval: number;
+	macKeyRescueMode: MacKeyRescueMode;
 }
 
 const DEFAULT_SETTINGS: EmacsKeyRepeatSettings = {
 	enableKeyRepeat: true,
 	keyRepeatDelay: 500, // Initial delay before repeat starts (ms)
 	keyRepeatInterval: 50, // Interval between repeats (ms)
+	macKeyRescueMode: "auto",
 };
 
-const DEFAULT_REPEATABLE_HOTKEYS: Record<string, { modifiers: string[]; key: string }[]> = {
-	'forward-char': [{ modifiers: ['ctrl'], key: 'f' }],
-	'backward-char': [{ modifiers: ['ctrl'], key: 'b' }],
-	'next-line': [{ modifiers: ['ctrl'], key: 'n' }],
-	'previous-line': [{ modifiers: ['ctrl'], key: 'p' }],
-	'delete-char': [{ modifiers: ['ctrl'], key: 'd' }],
-	'forward-word': [{ modifiers: ['alt'], key: 'f' }],
-	'backward-word': [{ modifiers: ['alt'], key: 'b' }],
-	'kill-word': [{ modifiers: ['alt'], key: 'd' }],
+// Single source of truth for this plugin's default bindings: addCommand()
+// registers them, the key-repeat path resolves them, and the macOS
+// key-rescue dispatcher matches events against them.
+const DEFAULT_COMMAND_HOTKEYS: Record<string, Hotkey[]> = {
+	'forward-char': [{ modifiers: ['Ctrl'], key: 'f' }],
+	'backward-char': [{ modifiers: ['Ctrl'], key: 'b' }],
+	'next-line': [{ modifiers: ['Ctrl'], key: 'n' }],
+	'previous-line': [{ modifiers: ['Ctrl'], key: 'p' }],
+	'delete-char': [{ modifiers: ['Ctrl'], key: 'd' }],
+	'forward-word': [{ modifiers: ['Alt'], key: 'f' }],
+	'backward-word': [{ modifiers: ['Alt'], key: 'b' }],
+	'kill-word': [{ modifiers: ['Alt'], key: 'd' }],
+	'move-end-of-line': [{ modifiers: ['Ctrl'], key: 'e' }],
+	'move-beginning-of-line': [{ modifiers: ['Ctrl'], key: 'a' }],
+	'beginning-of-buffer': [{ modifiers: ['Alt', 'Shift'], key: ',' }],
+	'end-of-buffer': [{ modifiers: ['Alt', 'Shift'], key: '.' }],
+	'kill-line': [{ modifiers: ['Ctrl'], key: 'k' }],
+	'backward-kill-word': [{ modifiers: ['Alt'], key: 'Backspace' }],
+	'kill-ring-save': [{ modifiers: ['Alt'], key: 'w' }],
+	'kill-region': [{ modifiers: ['Ctrl'], key: 'w' }],
+	'yank': [{ modifiers: ['Ctrl'], key: 'y' }],
+	'set-mark-command': [{ modifiers: ['Ctrl'], key: 'Space' }],
+	'keyboard-quit': [{ modifiers: ['Ctrl'], key: 'g' }],
+	'undo': [{ modifiers: ['Ctrl'], key: '/' }],
+	'redo': [{ modifiers: ['Ctrl', 'Shift'], key: '-' }],
+	'recenter-top-bottom': [{ modifiers: ['Ctrl'], key: 'l' }],
+	'forward-paragraph': [{ modifiers: ['Alt', 'Shift'], key: ']' }],
+	'backward-paragraph': [{ modifiers: ['Alt', 'Shift'], key: '[' }],
+	'upcase-dwim': [{ modifiers: ['Alt'], key: 'u' }],
+	'downcase-dwim': [{ modifiers: ['Alt'], key: 'l' }],
+	'capitalize-dwim': [{ modifiers: ['Alt'], key: 'c' }],
 };
 
 enum Direction {
@@ -63,6 +96,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
 	private repeatableMoveHandlers: Map<string, (editor: Editor, view?: EditorView) => void> | null = null;
+	private composedRescueCommands: Map<string, string> | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -83,6 +117,16 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			}
 		});
 
+		// macOS: Option (Alt) chords arrive composed into glyphs (Alt+F ->
+		// "ƒ"), so Obsidian's hotkey matcher never fires the plugin's Alt
+		// bindings and the glyph gets inserted instead. Rescue those events
+		// by matching the physical key. Registered after the key-repeat
+		// handler so repeatable chords are handled (and cancelled) there
+		// first.
+		this.registerDomEvent(document, "keydown", (e) => {
+			this.handleComposedKeyRescue(e);
+		});
+
 		// Things that stop repeat
 
 		// stop holding a key down
@@ -98,6 +142,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		// defocus current editor
 		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
 			this.stopAllKeyRepeats();
+			// Pick up hotkey changes made in Obsidian's settings since the
+			// rescue map was built.
+			this.composedRescueCommands = null;
 		}));
 
 		// Mouse click cancels mark mode (same as keyboard-quit)
@@ -109,7 +156,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "forward-char",
 			name: "Forward char",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'f' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['forward-char'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.moveForwardOneChar(editor);
 			},
@@ -118,7 +165,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "backward-char",
 			name: "Backward char",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'b' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-char'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.moveBackOneChar(editor);
 			},
@@ -127,7 +174,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "next-line",
 			name: "Next line",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'n' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['next-line'],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
 				this.moveNextLine(editor, this.getCodeMirrorView(markdownView));
 			},
@@ -136,7 +183,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "previous-line",
 			name: "Previous line",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'p' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['previous-line'],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
 				this.movePreviousLine(editor, this.getCodeMirrorView(markdownView));
 			},
@@ -145,7 +192,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "forward-word",
 			name: "Forward word",
-			hotkeys: [{ modifiers: ['Alt'], key: 'f' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['forward-word'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.moveForwardOneWord(editor);
 			},
@@ -154,7 +201,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "backward-word",
 			name: "Backward word",
-			hotkeys: [{ modifiers: ['Alt'], key: 'b' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-word'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.moveBackOneWord(editor);
 			},
@@ -163,7 +210,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "move-end-of-line",
 			name: "Move end of line",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'e' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['move-end-of-line'],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
 				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
@@ -179,7 +226,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "move-beginning-of-line",
 			name: "Move cursor to beginning of line",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'a' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['move-beginning-of-line'],
 			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
 				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
@@ -195,7 +242,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "beginning-of-buffer",
 			name: "Beginning of buffer",
-			hotkeys: [{ modifiers: ['Alt', 'Shift'], key: ',' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['beginning-of-buffer'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdateDirect(editor,
 					() => ({ line: 0, ch: 0 }),
@@ -206,7 +253,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "end-of-buffer",
 			name: "End of buffer",
-			hotkeys: [{ modifiers: ['Alt', 'Shift'], key: '.' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['end-of-buffer'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdateDirect(editor,
 					() => {
@@ -220,7 +267,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "kill-line",
 			name: "Kill line",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'k' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-line'],
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				this.disableSelection(editor);
 
@@ -241,7 +288,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "delete-char",
 			name: "Delete char",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'd' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['delete-char'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.deleteOneChar(editor);
 			},
@@ -250,7 +297,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "kill-word",
 			name: "Kill word",
-			hotkeys: [{ modifiers: ['Alt'], key: 'd' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-word'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.killOneWord(editor);
 
@@ -260,7 +307,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "backward-kill-word",
 			name: "Backward kill word",
-			hotkeys: [{ modifiers: ['Alt'], key: 'Backspace' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-kill-word'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordLeft");
@@ -271,7 +318,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "kill-ring-save",
 			name: "Kill ring save",
-			hotkeys: [{ modifiers: ['Alt'], key: 'w' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-ring-save'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.putSelectionInClipboard(editor, CopyCut.Copy);
 			},
@@ -280,7 +327,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "kill-region",
 			name: "Kill region",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'w' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-region'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.putSelectionInClipboard(editor, CopyCut.Cut);
 			},
@@ -289,7 +336,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "yank",
 			name: "Yank",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'y' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['yank'],
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				const clipboardContent = await navigator.clipboard.readText();
 				const cursor = editor.getCursor();
@@ -312,7 +359,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "set-mark-command",
 			name: "Set mark command",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'Space' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['set-mark-command'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				if (this.markPosition) {
 					this.disableSelection(editor);
@@ -340,7 +387,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "keyboard-quit",
 			name: "Keyboard-quit",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'g' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['keyboard-quit'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				this.disableSelection(editor);
 			},
@@ -349,7 +396,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "undo",
 			name: "Undo",
-			hotkeys: [{ modifiers: ['Ctrl'], key: '/' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['undo'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				editor.undo();
 			},
@@ -358,7 +405,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "redo",
 			name: "Redo",
-			hotkeys: [{ modifiers: ['Ctrl', 'Shift'], key: '-' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['redo'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				editor.redo();
 			},
@@ -367,7 +414,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "recenter-top-bottom",
 			name: "Recenter",
-			hotkeys: [{ modifiers: ['Ctrl'], key: 'l' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['recenter-top-bottom'],
 			editorCallback: (editor: Editor, _: MarkdownView) => {
 				const cursor = editor.getCursor();
 				const range = {
@@ -381,7 +428,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "forward-paragraph",
 			name: "Forward paragraph",
-			hotkeys: [{ modifiers: ['Alt', 'Shift'], key: ']' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['forward-paragraph'],
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
 					this.moveToNextParagraph(editor, Direction.Forward);
@@ -392,7 +439,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "backward-paragraph",
 			name: "Backward paragraph",
-			hotkeys: [{ modifiers: ['Alt', 'Shift'], key: '[' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-paragraph'],
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				this.withSelectionUpdate(editor, () => {
 					this.moveToNextParagraph(editor, Direction.Backward);
@@ -457,7 +504,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'upcase-dwim',
 			name: 'Upcase dwim',
-			hotkeys: [{ modifiers: ['Alt'], key: 'u' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['upcase-dwim'],
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				this.transformDWIM(editor, word => word.toUpperCase());
 			}
@@ -466,7 +513,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'downcase-dwim',
 			name: 'Downcase dwim',
-			hotkeys: [{ modifiers: ['Alt'], key: 'l' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['downcase-dwim'],
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				this.transformDWIM(editor, word => word.toLowerCase());
 			}
@@ -475,7 +522,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'capitalize-dwim',
 			name: 'Capitalize dwim',
-			hotkeys: [{ modifiers: ['Alt'], key: 'c' }],
+			hotkeys: DEFAULT_COMMAND_HOTKEYS['capitalize-dwim'],
 			editorCallback: async (editor: Editor, _: MarkdownView) => {
 				this.transformDWIM(editor, capitalizeOneWord, capitalizeWords);
 			}
@@ -499,6 +546,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		this.settings.keyRepeatDelay = Math.max(25, Math.min(2000, this.settings.keyRepeatDelay));
 		this.settings.keyRepeatInterval = Math.max(10, Math.min(1000, this.settings.keyRepeatInterval));
+		if (this.settings.macKeyRescueMode !== "on" && this.settings.macKeyRescueMode !== "off") {
+			this.settings.macKeyRescueMode = "auto";
+		}
 	}
 
 	async saveSettings() {
@@ -641,12 +691,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	getKeyId(e: KeyboardEvent): string {
-		const modifiers = [];
-		if (e.ctrlKey) modifiers.push('ctrl');
-		if (e.altKey) modifiers.push('alt');
-		if (e.shiftKey) modifiers.push('shift');
-		if (e.metaKey) modifiers.push('meta');
-		return [...modifiers, e.key.toLowerCase()].join('+');
+		// Match by physical key so chords the OS composed into other
+		// characters (macOS Option+F -> "ƒ") still hit the repeat table;
+		// modifiers are sorted to stay comparable with normalizeHotkey().
+		return eventKeyId(e, canonicalKeyFromEvent(e));
 	}
 
 	getKeyMoveFunc(e: KeyboardEvent): (() => void) | null {
@@ -680,15 +728,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		};
 
 		const result = new Map<string, (editor: Editor, view?: EditorView) => void>();
-		const prefix = `${this.manifest.id}:`;
-		const hotkeyManager = (this.app as App & { hotkeyManager?: { getHotkeys(id: string): { modifiers: string[]; key: string }[] | null } }).hotkeyManager;
 
 		for (const [commandId, handler] of Object.entries(handlerByCommand)) {
-			const hotkeys = hotkeyManager?.getHotkeys(`${prefix}${commandId}`);
-			const effectiveHotkeys = hotkeys ?? DEFAULT_REPEATABLE_HOTKEYS[commandId];
-			if (!effectiveHotkeys) continue;
-			for (const hotkey of effectiveHotkeys) {
-				const normalized = this.normalizeHotkey(hotkey);
+			for (const hotkey of this.effectiveHotkeys(commandId)) {
+				const normalized = normalizeHotkey(hotkey);
 				if (normalized) {
 					result.set(normalized, handler);
 				}
@@ -698,18 +741,80 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.repeatableMoveHandlers = result;
 	}
 
-	normalizeHotkey(hotkey: { modifiers: string[]; key: string }): string | null {
-		const key = hotkey.key?.toLowerCase();
-		if (!key) return null;
+	// A command's effective bindings: whatever the user configured in
+	// Obsidian's Hotkeys settings, falling back to this plugin's defaults.
+	// app.hotkeyManager is not part of the public typings.
+	effectiveHotkeys(commandId: string): Hotkey[] {
+		const hotkeyManager = (this.app as App & { hotkeyManager?: { getHotkeys(id: string): Hotkey[] | null } }).hotkeyManager;
+		return hotkeyManager?.getHotkeys(`${this.manifest.id}:${commandId}`) ?? DEFAULT_COMMAND_HOTKEYS[commandId] ?? [];
+	}
 
-		// Resolve platform-specific "Mod" modifier to Ctrl (non-mac) or Meta (mac).
-		const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-		const resolvedModifiers = hotkey.modifiers.map((m) => {
-			if (m === 'Mod') return isMac ? 'meta' : 'ctrl';
-			return m.toLowerCase();
-		});
+	// app.commands is not part of the public typings either.
+	private get appCommands(): { commands?: Record<string, unknown>; executeCommandById(id: string): boolean } | undefined {
+		return (this.app as App & { commands?: { commands?: Record<string, unknown>; executeCommandById(id: string): boolean } }).commands;
+	}
 
-		return [...resolvedModifiers.sort(), key].join('+');
+	isMacKeyRescueEnabled(): boolean {
+		const mode = this.settings.macKeyRescueMode;
+		return mode === "on" || (mode !== "off" && IS_MAC);
+	}
+
+	handleComposedKeyRescue(e: KeyboardEvent) {
+		if (!this.isMacKeyRescueEnabled() || e.defaultPrevented) {
+			return;
+		}
+
+		const canonicalId = eventKeyId(e, canonicalKeyFromEvent(e));
+		const literalId = eventKeyId(e, literalKeyFromEvent(e));
+		// Only rescue chords the OS composed into something else. If the
+		// delivered key already matches a binding (or equals the physical
+		// key), Obsidian's own hotkey dispatch handles it; intercepting
+		// here would run the command twice.
+		if (canonicalId === literalId || this.rescueCommands().has(literalId)) {
+			return;
+		}
+
+		const commandId = this.rescueCommands().get(canonicalId);
+		if (!commandId || !this.isInActiveEditor()) {
+			return;
+		}
+
+		// The keystroke must actually go to the note editor, not to a modal
+		// or some other pane's input.
+		if (!(e.target instanceof Element) || !e.target.closest(".cm-editor")) {
+			return;
+		}
+
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		this.appCommands?.executeCommandById(`${this.manifest.id}:${commandId}`);
+	}
+
+	// Canonical key id -> plugin command id, built from the user's effective
+	// hotkeys. Rebuilt on active-leaf-change so hotkey edits are picked up.
+	rescueCommands(): Map<string, string> {
+		if (this.composedRescueCommands) {
+			return this.composedRescueCommands;
+		}
+
+		const result = new Map<string, string>();
+		const prefix = `${this.manifest.id}:`;
+		const registered = this.appCommands?.commands;
+		const commandIds = registered
+			? Object.keys(registered).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length))
+			: Object.keys(DEFAULT_COMMAND_HOTKEYS);
+
+		for (const commandId of commandIds) {
+			for (const hotkey of this.effectiveHotkeys(commandId)) {
+				const normalized = normalizeHotkey(hotkey);
+				if (normalized) {
+					result.set(normalized, commandId);
+				}
+			}
+		}
+
+		this.composedRescueCommands = result;
+		return result;
 	}
 
 	stopKeyRepeat(keyId: string) {
@@ -1170,6 +1275,22 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 					slider.sliderEl.parentElement?.parentElement
 						?.querySelector('.setting-item-description')
 						?.setText(`Time between repeats (10-1000ms). Current: ${value}ms`);
+				})
+			);
+
+		new Setting(containerEl)
+			.setName('macOS key rescue')
+			.setDesc('macOS composes Option+letter into special characters (Alt+F types "ƒ"), so Emacs meta chords like Alt+F/B/D/W and Ctrl+Space never fire and the character gets inserted instead. When enabled, composed keystrokes are matched by physical key position and the matching command is run. Auto: enable on macOS only.')
+			.addDropdown(dropdown => dropdown
+				.addOptions({
+					auto: 'Auto (macOS only)',
+					on: 'Always on',
+					off: 'Disabled',
+				})
+				.setValue(this.plugin.settings.macKeyRescueMode)
+				.onChange(async (value) => {
+					this.plugin.settings.macKeyRescueMode = value as MacKeyRescueMode;
+					await this.plugin.saveSettings();
 				})
 			);
 
