@@ -268,7 +268,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-line",
 			name: "Kill line",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-line'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, view: MarkdownView) => {
 				this.disableSelection(editor);
 
 				const cursor = editor.getCursor();
@@ -280,8 +280,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 						line: cursor.line,
 						ch: lineContent.length,
 					});
-					this.putSelectionInClipboard(editor, CopyCut.Cut);
-					editor.setCursor(cursor);
+					this.putSelectionInClipboard(editor, CopyCut.Cut, "emacs.killLine", view);
 				}
 			},
 		});
@@ -988,6 +987,36 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 
+	deleteSelectionWithAnnotation(
+		editor: Editor,
+		userEventName?: string,
+		view?: MarkdownView | EditorView
+	) {
+		let cmView: EditorView | undefined;
+		if (view instanceof EditorView) {
+			cmView = view;
+		} else if (view) {
+			cmView = this.getCodeMirrorView(view);
+		}
+		if (!cmView) {
+			cmView = (editor as unknown as { cm?: EditorView }).cm;
+		}
+
+		if (cmView && userEventName) {
+			const sel = cmView.state.selection.main;
+			if (!sel.empty) {
+				cmView.dispatch({
+					changes: { from: sel.from, to: sel.to, insert: "" },
+					selection: EditorSelection.cursor(sel.from),
+					annotations: Transaction.userEvent.of(userEventName),
+				});
+				return;
+			}
+		}
+
+		editor.replaceSelection("");
+	}
+
 	withDeleteInText(editor: Editor, callback: () => void,
 		putIntoClipboard: boolean = true) {
 		
@@ -1006,7 +1035,12 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		}
 	}
 
-	putSelectionInClipboard(editor: Editor, mode: CopyCut) {
+	putSelectionInClipboard(
+		editor: Editor,
+		mode: CopyCut,
+		userEventName?: string,
+		view?: MarkdownView | EditorView
+	) {
 		if (!this.getCurrentSelectionStart(editor)) {
 			return;
 		}
@@ -1016,7 +1050,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		if (mode == CopyCut.Copy) {
 			document.dispatchEvent(new ClipboardEvent("copy"));
 		} else if (mode == CopyCut.Cut) {
-			editor.replaceSelection("");
+			this.deleteSelectionWithAnnotation(editor, userEventName, view);
 			document.dispatchEvent(new ClipboardEvent("cut"));
 		}
 
