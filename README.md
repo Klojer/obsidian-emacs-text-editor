@@ -90,7 +90,7 @@ On macOS the Option (Alt) key composes special characters — Alt+F types `ƒ`, 
 Configure it under Settings → Community plugins → Emacs text editor → **macOS key rescue**:
 
 - **Auto (default):** active on macOS only — Windows/Linux behavior is completely unchanged.
-- **Always on:** useful on other platforms with layouts where AltGr composes characters (e.g. some European layouts).
+- **Always on:** mainly useful for testing on non-mac machines, or on platforms where the plain Alt key itself composes characters. Note that Windows/Linux report `AltGr` as `Ctrl+Alt`, so an `AltGr`-composed chord does not match a plain Alt binding and will not be rescued — rebind the command to `Ctrl+Alt+<key>` if you want that chord.
 - **Disabled:** previous upstream behavior.
 
 Notes:

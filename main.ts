@@ -1,4 +1,4 @@
-import { Editor, EditorPosition, Plugin, MarkdownView, PluginSettingTab, Setting, App, Hotkey } from "obsidian";
+import { Editor, EditorPosition, Plugin, MarkdownView, MarkdownFileInfo, PluginSettingTab, Setting, App, Hotkey } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { EditorSelection, Transaction } from "@codemirror/state";
 import {
@@ -90,13 +90,12 @@ const insertableSpecialKeys = [
 ];
 
 export default class EmacsTextEditorPlugin extends Plugin {
-	settings: EmacsKeyRepeatSettings;
+	settings!: EmacsKeyRepeatSettings;
 	private markPosition: EditorPosition | undefined;
 	disableSelectionWhenPossible = false;
 
 	private currentRepeatTimeouts: Map<string, { timeoutId: number; intervalId?: number }> = new Map();
-	private repeatableMoveHandlers: Map<string, (editor: Editor, view?: EditorView) => void> | null = null;
-	private composedRescueCommands: Map<string, string> | null = null;
+	private cachedPluginCommandIds: string[] | null = null;
 
 	// async so can wait for settings before full init
 	async onload() {
@@ -142,9 +141,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		// defocus current editor
 		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
 			this.stopAllKeyRepeats();
-			// Pick up hotkey changes made in Obsidian's settings since the
-			// rescue map was built.
-			this.composedRescueCommands = null;
+			// Refresh the cached command-id list (registry-scoped, rarely
+			// changing — unlike bindings, which rebuild per keystroke).
+			this.cachedPluginCommandIds = null;
 		}));
 
 		// Mouse click cancels mark mode (same as keyboard-quit)
@@ -157,7 +156,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "forward-char",
 			name: "Forward char",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['forward-char'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.moveForwardOneChar(editor);
 			},
 		});
@@ -166,7 +165,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "backward-char",
 			name: "Backward char",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-char'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.moveBackOneChar(editor);
 			},
 		});
@@ -175,7 +174,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "next-line",
 			name: "Next line",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['next-line'],
-			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+			editorCallback: (editor: Editor, markdownView: MarkdownView | MarkdownFileInfo) => {
 				this.moveNextLine(editor, this.getCodeMirrorView(markdownView));
 			},
 		});
@@ -184,7 +183,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "previous-line",
 			name: "Previous line",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['previous-line'],
-			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+			editorCallback: (editor: Editor, markdownView: MarkdownView | MarkdownFileInfo) => {
 				this.movePreviousLine(editor, this.getCodeMirrorView(markdownView));
 			},
 		});
@@ -193,7 +192,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "forward-word",
 			name: "Forward word",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['forward-word'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.moveForwardOneWord(editor);
 			},
 		});
@@ -202,7 +201,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "backward-word",
 			name: "Backward word",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-word'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.moveBackOneWord(editor);
 			},
 		});
@@ -211,7 +210,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "move-end-of-line",
 			name: "Move end of line",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['move-end-of-line'],
-			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+			editorCallback: (editor: Editor, markdownView: MarkdownView | MarkdownFileInfo) => {
 				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
 					this.moveToLineBoundary(editor, view, true);
@@ -227,7 +226,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "move-beginning-of-line",
 			name: "Move cursor to beginning of line",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['move-beginning-of-line'],
-			editorCallback: (editor: Editor, markdownView: MarkdownView) => {
+			editorCallback: (editor: Editor, markdownView: MarkdownView | MarkdownFileInfo) => {
 				const view = this.getCodeMirrorView(markdownView);
 				if (view) {
 					this.moveToLineBoundary(editor, view, false);
@@ -243,7 +242,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "beginning-of-buffer",
 			name: "Beginning of buffer",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['beginning-of-buffer'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdateDirect(editor,
 					() => ({ line: 0, ch: 0 }),
 				);
@@ -254,7 +253,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "end-of-buffer",
 			name: "End of buffer",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['end-of-buffer'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdateDirect(editor,
 					() => {
 						const lastLine = editor.lineCount() - 1;
@@ -268,7 +267,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-line",
 			name: "Kill line",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-line'],
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+			editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
 				this.disableSelection(editor);
 
 				const cursor = editor.getCursor();
@@ -289,7 +288,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "delete-char",
 			name: "Delete char",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['delete-char'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.deleteOneChar(editor);
 			},
 		});
@@ -298,7 +297,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-word",
 			name: "Kill word",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-word'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.killOneWord(editor);
 
 			},
@@ -308,7 +307,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "backward-kill-word",
 			name: "Backward kill word",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-kill-word'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withDeleteInText(editor, () => {
 					editor.exec("goWordLeft");
 				});
@@ -319,7 +318,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-ring-save",
 			name: "Kill ring save",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-ring-save'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.putSelectionInClipboard(editor, CopyCut.Copy);
 			},
 		});
@@ -328,7 +327,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "kill-region",
 			name: "Kill region",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['kill-region'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.putSelectionInClipboard(editor, CopyCut.Cut);
 			},
 		});
@@ -337,7 +336,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "yank",
 			name: "Yank",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['yank'],
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				const clipboardContent = await navigator.clipboard.readText();
 				const cursor = editor.getCursor();
 
@@ -360,7 +359,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "set-mark-command",
 			name: "Set mark command",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['set-mark-command'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				if (this.markPosition) {
 					this.disableSelection(editor);
 				} else {
@@ -373,7 +372,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "mark-whole-buffer",
 			name: "Mark whole buffer",
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				const lastLine = editor.lineCount() - 1;
 				const bufferStart = { line: 0, ch: 0 };
 				const bufferEnd = { line: lastLine, ch: editor.getLine(lastLine).length };
@@ -388,7 +387,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "keyboard-quit",
 			name: "Keyboard-quit",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['keyboard-quit'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.disableSelection(editor);
 			},
 		});
@@ -397,7 +396,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "undo",
 			name: "Undo",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['undo'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				editor.undo();
 			},
 		});
@@ -406,7 +405,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "redo",
 			name: "Redo",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['redo'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				editor.redo();
 			},
 		});
@@ -415,7 +414,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "recenter-top-bottom",
 			name: "Recenter",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['recenter-top-bottom'],
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				const cursor = editor.getCursor();
 				const range = {
 					from: { line: cursor.line, ch: cursor.ch },
@@ -429,7 +428,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "forward-paragraph",
 			name: "Forward paragraph",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['forward-paragraph'],
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdate(editor, () => {
 					this.moveToNextParagraph(editor, Direction.Forward);
 				});
@@ -440,7 +439,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: "backward-paragraph",
 			name: "Backward paragraph",
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['backward-paragraph'],
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdate(editor, () => {
 					this.moveToNextParagraph(editor, Direction.Backward);
 				});
@@ -450,7 +449,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'upcase-word',
 			name: 'Upcase word',
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transformWordAtCursor(editor, word => word.toUpperCase());
 			}
 		});
@@ -458,7 +457,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'downcase-word',
 			name: 'Downcase word',
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transformWordAtCursor(editor, word => word.toLowerCase());
 			}
 		});
@@ -466,7 +465,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'capitalize-word',
 			name: 'Capitalize word',
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transformWordAtCursor(editor, capitalizeOneWord);
 			}
 		});
@@ -474,7 +473,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'upcase-region',
 			name: 'Upcase region',
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdate(editor, () => {
 					this.transformSelection(editor, word => word.toUpperCase());
 				});
@@ -484,7 +483,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'downcase-region',
 			name: 'Downcase region',
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdate(editor, () => {
 					this.transformSelection(editor, word => word.toLowerCase());
 				});
@@ -494,7 +493,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: 'capitalize-region',
 			name: 'Capitalize region',
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.withSelectionUpdate(editor, () => {
 					this.transformSelection(editor, capitalizeWords);
 				});
@@ -505,7 +504,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'upcase-dwim',
 			name: 'Upcase dwim',
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['upcase-dwim'],
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transformDWIM(editor, word => word.toUpperCase());
 			}
 		});
@@ -514,7 +513,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'downcase-dwim',
 			name: 'Downcase dwim',
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['downcase-dwim'],
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transformDWIM(editor, word => word.toLowerCase());
 			}
 		});
@@ -523,7 +522,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			id: 'capitalize-dwim',
 			name: 'Capitalize dwim',
 			hotkeys: DEFAULT_COMMAND_HOTKEYS['capitalize-dwim'],
-			editorCallback: async (editor: Editor, _: MarkdownView) => {
+			editorCallback: async (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transformDWIM(editor, capitalizeOneWord, capitalizeWords);
 			}
 		});
@@ -531,7 +530,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.addCommand({
 			id: "transpose-chars",
 			name: "Transpose chars",
-			editorCallback: (editor: Editor, _: MarkdownView) => {
+			editorCallback: (editor: Editor, _: MarkdownView | MarkdownFileInfo) => {
 				this.transposeChars(editor);
 			},
 		});
@@ -555,7 +554,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	getCodeMirrorView(markdownView: MarkdownView): EditorView | undefined {
+	getCodeMirrorView(markdownView: MarkdownView | MarkdownFileInfo): EditorView | undefined {
 		return (markdownView as MarkdownView & { editor?: { cm?: EditorView } }).editor?.cm;
 	}
 
@@ -645,6 +644,10 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		const keyMoveFunc = this.getKeyMoveFunc(keyEvent);
 
 		if (keyMoveFunc) {
+			// preventDefault() sets the "handled" signal for the
+			// composed-key rescue dispatcher: it is a second listener on
+			// this same document node, so stopPropagation() would NOT
+			// stop it — only its e.defaultPrevented check does.
 			keyEvent.preventDefault();
 			keyEvent.stopPropagation();
 
@@ -701,9 +704,8 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 		if (!activeView) return null;
 
-		this.buildRepeatableMoveHandlers();
 		const keyId = this.getKeyId(e);
-		const handler = this.repeatableMoveHandlers?.get(keyId);
+		const handler = this.buildRepeatableMoveHandlers().get(keyId);
 		if (!handler) return null;
 
 		const editor = activeView.editor;
@@ -711,11 +713,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		return () => handler(editor, view);
 	}
 
-	buildRepeatableMoveHandlers() {
-		if (this.repeatableMoveHandlers) {
-			return;
-		}
-
+	buildRepeatableMoveHandlers(): Map<string, (editor: Editor, view?: EditorView) => void> {
 		const handlerByCommand: Record<string, (editor: Editor, view?: EditorView) => void> = {
 			'forward-char': (ed) => this.moveForwardOneChar(ed),
 			'backward-char': (ed) => this.moveBackOneChar(ed),
@@ -738,7 +736,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			}
 		}
 
-		this.repeatableMoveHandlers = result;
+		return result;
 	}
 
 	// A command's effective bindings: whatever the user configured in
@@ -759,22 +757,25 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		return mode === "on" || (mode !== "off" && IS_MAC);
 	}
 
+	// Built per composed keystroke: there is no public Obsidian
+	// event for hotkey changes, so any cache goes stale.
 	handleComposedKeyRescue(e: KeyboardEvent) {
 		if (!this.isMacKeyRescueEnabled() || e.defaultPrevented) {
 			return;
 		}
 
+		const rescue = this.rescueCommands();
 		const canonicalId = eventKeyId(e, canonicalKeyFromEvent(e));
 		const literalId = eventKeyId(e, literalKeyFromEvent(e));
 		// Only rescue chords the OS composed into something else. If the
 		// delivered key already matches a binding (or equals the physical
 		// key), Obsidian's own hotkey dispatch handles it; intercepting
 		// here would run the command twice.
-		if (canonicalId === literalId || this.rescueCommands().has(literalId)) {
+		if (canonicalId === literalId || rescue.has(literalId)) {
 			return;
 		}
 
-		const commandId = this.rescueCommands().get(canonicalId);
+		const commandId = rescue.get(canonicalId);
 		if (!commandId || !this.isInActiveEditor()) {
 			return;
 		}
@@ -790,21 +791,15 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		this.appCommands?.executeCommandById(`${this.manifest.id}:${commandId}`);
 	}
 
-	// Canonical key id -> plugin command id, built from the user's effective
-	// hotkeys. Rebuilt on active-leaf-change so hotkey edits are picked up.
+	// Canonical key id -> plugin command id, built from the user's
+	// effective hotkeys. Built per composed keystroke: there is no
+	// public Obsidian event for hotkey changes, so any cache goes stale.
+	// The command-id LIST is cached (ids change only at plugin load) —
+	// bindings always rebuild, so hotkey edits apply immediately.
 	rescueCommands(): Map<string, string> {
-		if (this.composedRescueCommands) {
-			return this.composedRescueCommands;
-		}
-
 		const result = new Map<string, string>();
-		const prefix = `${this.manifest.id}:`;
-		const registered = this.appCommands?.commands;
-		const commandIds = registered
-			? Object.keys(registered).filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length))
-			: Object.keys(DEFAULT_COMMAND_HOTKEYS);
 
-		for (const commandId of commandIds) {
+		for (const commandId of this.pluginCommandIds()) {
 			for (const hotkey of this.effectiveHotkeys(commandId)) {
 				const normalized = normalizeHotkey(hotkey);
 				if (normalized) {
@@ -813,8 +808,26 @@ export default class EmacsTextEditorPlugin extends Plugin {
 			}
 		}
 
-		this.composedRescueCommands = result;
 		return result;
+	}
+
+	// This plugin's command ids from the app-wide command registry.
+	// Cached because the registry scan is O(all commands in the app)
+	// (~163-169µs/keystroke measured, tests/rebuild.bench.ts). The
+	// no-registry fallback is never cached — it derives from our own
+	// DEFAULT_COMMAND_HOTKEYS, which cannot change underneath us.
+	private pluginCommandIds(): string[] {
+		const registered = this.appCommands?.commands;
+		if (!registered) {
+			return Object.keys(DEFAULT_COMMAND_HOTKEYS);
+		}
+		if (!this.cachedPluginCommandIds) {
+			const prefix = `${this.manifest.id}:`;
+			this.cachedPluginCommandIds = Object.keys(registered)
+				.filter((id) => id.startsWith(prefix))
+				.map((id) => id.slice(prefix.length));
+		}
+		return this.cachedPluginCommandIds;
 	}
 
 	stopKeyRepeat(keyId: string) {
@@ -847,9 +860,9 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	deleteOneChar(editor: Editor) {
-	  this.withDeleteInText(editor, () => {
-		editor.exec("goRight");
-	  }, false);
+		this.withDeleteInText(editor, () => {
+			editor.exec("goRight");
+		}, false);
 	}
 
 	killOneWord(editor: Editor) {
@@ -990,7 +1003,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	deleteSelectionWithAnnotation(
 		editor: Editor,
 		userEventName?: string,
-		view?: MarkdownView | EditorView
+		view?: MarkdownView | EditorView | MarkdownFileInfo
 	) {
 		let cmView: EditorView | undefined;
 		if (view instanceof EditorView) {
@@ -1019,7 +1032,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 
 	withDeleteInText(editor: Editor, callback: () => void,
 		putIntoClipboard: boolean = true) {
-		
+
 		const cursorBefore = editor.getCursor();
 
 		callback();
@@ -1039,7 +1052,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 		editor: Editor,
 		mode: CopyCut,
 		userEventName?: string,
-		view?: MarkdownView | EditorView
+		view?: MarkdownView | EditorView | MarkdownFileInfo
 	) {
 		if (!this.getCurrentSelectionStart(editor)) {
 			return;
@@ -1316,7 +1329,7 @@ class EmacsKeyRepeatSettingTab extends PluginSettingTab {
 
 		buttonContainer.createEl('button', { text: 'Fast' })
 			.addEventListener('click', async () => {
-		  this.plugin.settings.keyRepeatDelay = 25;
+				this.plugin.settings.keyRepeatDelay = 25;
 				this.plugin.settings.keyRepeatInterval = 25;
 				await this.plugin.saveSettings();
 				this.display();
