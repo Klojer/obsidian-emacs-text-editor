@@ -636,7 +636,7 @@ export default class EmacsTextEditorPlugin extends Plugin {
 	}
 
 	handleKeyRepeat(keyEvent: KeyboardEvent) {
-		if (!this.isInActiveEditor()) {
+		if (keyEvent.defaultPrevented || !this.isInActiveEditor()) {
 			return;
 		}
 
